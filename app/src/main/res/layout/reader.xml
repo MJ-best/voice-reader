@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
+    android:orientation="vertical">
+
+    <androidx.fragment.app.FragmentContainerView
+        android:id="@+id/navigator"
+        android:name="org.readium.r2.navigator.epub.EpubNavigatorFragment"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/prevChapter"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:contentDescription="이전 장"
+            android:src="@android:drawable/ic_media_previous"
+            android:tint="?android:attr/textColorPrimary" />
+
+        <ImageButton
+            android:id="@+id/prev"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:contentDescription="이전 문장"
+            android:src="@android:drawable/ic_media_rew"
+            android:tint="?android:attr/textColorPrimary" />
+
+        <ImageButton
+            android:id="@+id/play"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:contentDescription="재생"
+            android:src="@android:drawable/ic_media_play"
+            android:tint="?android:attr/textColorPrimary" />
+
+        <ImageButton
+            android:id="@+id/next"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:contentDescription="다음 문장"
+            android:src="@android:drawable/ic_media_ff"
+            android:tint="?android:attr/textColorPrimary" />
+
+        <ImageButton
+            android:id="@+id/nextChapter"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:contentDescription="다음 장"
+            android:src="@android:drawable/ic_media_next"
+            android:tint="?android:attr/textColorPrimary" />
+
+        <Button
+            android:id="@+id/speed"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:contentDescription="재생 속도"
+            android:textAllCaps="false" />
+    </LinearLayout>
+</LinearLayout>
