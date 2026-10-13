@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="paper">#000000</color>
+    <color name="surface">#000000</color>
+    <color name="surfaceSoft">#333333</color>
+    <color name="ink">#FFFFFF</color>
+    <color name="inkMuted">#D0D0D0</color>
+    <color name="outline">#FFFFFF</color>
+    <color name="line">#FFFFFF</color>
+    <color name="accent">#FFFFFF</color>
+    <color name="onAccent">#000000</color>
+    <color name="highlight">#55FFFFFF</color>
+    <bool name="lightBars">false</bool>
+</resources>

@@ -1,0 +1,10 @@
+<!-- Themed-icon (Android 13+) silhouette: head with eye cut-outs, open book, hands. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M54,47m-21,0a21,21 0,1 1,42 0a21,21 0,1 1,-42 0ZM47.5,49.5m-4,0a4,5.2 0,1 0,8 0a4,5.2 0,1 0,-8 0ZM60.5,47.5m-4,0a4,5.2 0,1 0,8 0a4,5.2 0,1 0,-8 0Z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M33,55.5Q44,55 54,61.5Q64,55 75,55.5L73,77Q64,77.5 54,81Q44,77.5 35,77Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M36.5,72.5m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M71.5,72.5m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+</vector>

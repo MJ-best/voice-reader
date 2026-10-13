@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  E-ink first: pure black on white. Nothing relies on hue; selection and presses are shown by inverting
+  (black fill, white text). Dark values (white on black) live in values-night.
+-->
+<resources>
+    <color name="paper">#FFFFFF</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surfaceSoft">#E6E6E6</color>
+    <color name="ink">#000000</color>
+    <color name="inkMuted">#333333</color>
+    <color name="outline">#000000</color>
+    <color name="line">#000000</color>
+    <color name="accent">#000000</color>
+    <color name="onAccent">#FFFFFF</color>
+    <color name="highlight">#38000000</color>
+    <bool name="lightBars">true</bool>
+</resources>

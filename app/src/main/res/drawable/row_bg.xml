@@ -1,0 +1,5 @@
+<!-- List rows: a solid black block while pressed. Instant, no ripple: e-ink can't show animations. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true" android:drawable="@color/ink" />
+    <item android:drawable="@android:color/transparent" />
+</selector>

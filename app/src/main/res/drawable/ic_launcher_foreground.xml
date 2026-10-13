@@ -1,0 +1,79 @@
+<!-- A soft round reader holding an open book. Kept inside the 66dp adaptive-icon safe circle. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- glow -->
+    <path android:pathData="M54,47m-27,0a27,27 0,1 1,54 0a27,27 0,1 1,-54 0">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="54" android:centerY="47" android:gradientRadius="27">
+                <item android:offset="0.7" android:color="#33FFFFFF" />
+                <item android:offset="1" android:color="#00FFFFFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- head: glassy, bright at the rim -->
+    <path android:pathData="M54,47m-21,0a21,21 0,1 1,42 0a21,21 0,1 1,-42 0">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="54" android:centerY="50" android:gradientRadius="22">
+                <item android:offset="0" android:color="#FF2FA8FF" />
+                <item android:offset="0.65" android:color="#FF6CCBFF" />
+                <item android:offset="1" android:color="#FFEAF8FF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- eyes -->
+    <path android:pathData="M47.5,49.5m-4,0a4,5.2 0,1 1,8 0a4,5.2 0,1 1,-8 0">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="47.5" android:startY="44" android:endX="47.5" android:endY="55">
+                <item android:offset="0" android:color="#FFF4FBFF" />
+                <item android:offset="1" android:color="#FFB9E4FF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M60.5,47.5m-4,0a4,5.2 0,1 1,8 0a4,5.2 0,1 1,-8 0">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="60.5" android:startY="42" android:endX="60.5" android:endY="53">
+                <item android:offset="0" android:color="#FFF4FBFF" />
+                <item android:offset="1" android:color="#FFB9E4FF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- page edges -->
+    <path android:fillColor="#FFD6F1FF" android:pathData="M33,55.5Q44,55 54,61.5Q64,55 75,55.5L75,58Q64,58 54,64Q44,58 33,58Z" />
+    <!-- covers -->
+    <path android:pathData="M33,58Q44,58 54,64L54,81Q44,77.5 35,77Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="33" android:startY="58" android:endX="54" android:endY="81">
+                <item android:offset="0" android:color="#FF3AA2FF" />
+                <item android:offset="1" android:color="#FF0E6CF2" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M75,58Q64,58 54,64L54,81Q64,77.5 73,77Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="75" android:startY="58" android:endX="54" android:endY="81">
+                <item android:offset="0" android:color="#FF3AA2FF" />
+                <item android:offset="1" android:color="#FF0E6CF2" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- spine -->
+    <path android:fillColor="#FF1679F2" android:pathData="M52.6,63.2L55.4,63.2L55.4,81.6Q54,82.2 52.6,81.6Z" />
+    <!-- hands -->
+    <path android:pathData="M36.5,72.5m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="35" android:centerY="70" android:gradientRadius="9">
+                <item android:offset="0" android:color="#FFFFFFFF" />
+                <item android:offset="1" android:color="#FF9FDBFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M71.5,72.5m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="70" android:centerY="70" android:gradientRadius="9">
+                <item android:offset="0" android:color="#FFFFFFFF" />
+                <item android:offset="1" android:color="#FF9FDBFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

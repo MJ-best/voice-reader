@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Built for monochrome e-ink readers: no motion (window, sheet and dialog animations off, no ripples), no shadows or
+  gradients, shapes drawn with black outlines, large type and touch targets, presses shown by instant inversion.
+-->
+<resources>
+    <style name="Theme.VoiceReader" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/ink</item>
+        <item name="colorOnPrimary">@color/onAccent</item>
+        <item name="colorPrimaryContainer">@color/ink</item>
+        <item name="colorOnPrimaryContainer">@color/onAccent</item>
+        <item name="colorSecondaryContainer">@color/ink</item>
+        <item name="colorOnSecondaryContainer">@color/onAccent</item>
+        <item name="android:colorBackground">@color/paper</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorOnSurface">@color/ink</item>
+        <item name="colorSurfaceVariant">@color/surfaceSoft</item>
+        <item name="colorOnSurfaceVariant">@color/inkMuted</item>
+        <item name="colorSurfaceContainerLowest">@color/surface</item>
+        <item name="colorSurfaceContainerLow">@color/surface</item>
+        <item name="colorSurfaceContainer">@color/surface</item>
+        <item name="colorSurfaceContainerHigh">@color/surface</item>
+        <item name="colorSurfaceContainerHighest">@color/surface</item>
+        <item name="colorOutline">@color/outline</item>
+        <item name="colorOutlineVariant">@color/line</item>
+        <item name="colorControlHighlight">@android:color/transparent</item>
+        <item name="elevationOverlayEnabled">false</item>
+        <item name="android:windowBackground">@color/paper</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">@bool/lightBars</item>
+        <item name="android:windowLightNavigationBar">@bool/lightBars</item>
+        <item name="materialButtonStyle">@style/Widget.VoiceReader.Button</item>
+        <item name="materialButtonOutlinedStyle">@style/Widget.VoiceReader.Button</item>
+        <item name="bottomSheetDialogTheme">@style/ThemeOverlay.VoiceReader.Sheet</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.VoiceReader.Dialog</item>
+    </style>
+
+    <style name="ThemeOverlay.VoiceReader.Sheet" parent="ThemeOverlay.Material3.BottomSheetDialog">
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowLightStatusBar">@bool/lightBars</item>
+        <item name="android:navigationBarColor">@color/surface</item>
+        <item name="bottomSheetStyle">@style/Widget.VoiceReader.Sheet</item>
+    </style>
+
+    <style name="Widget.VoiceReader.Sheet" parent="Widget.Material3.BottomSheet.Modal">
+        <item name="backgroundTint">@color/surface</item>
+    </style>
+
+    <style name="ThemeOverlay.VoiceReader.Dialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.VoiceReader.Button.Dialog</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.VoiceReader.Button.Dialog</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.VoiceReader.Button.Dialog</item>
+    </style>
+
+    <!-- Outlined: white with a 2dp black border; black while pressed or selected (toggle groups). -->
+    <style name="Widget.VoiceReader.Button" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="backgroundTint">@color/btn_bg</item>
+        <item name="android:textColor">@color/btn_fg</item>
+        <item name="iconTint">@color/btn_fg</item>
+        <item name="strokeColor">@color/ink</item>
+        <item name="strokeWidth">2dp</item>
+        <item name="rippleColor">@android:color/transparent</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="cornerRadius">14dp</item>
+        <item name="android:minHeight">56dp</item>
+        <item name="android:textSize">17sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+    </style>
+
+    <style name="Widget.VoiceReader.Button.Filled">
+        <item name="backgroundTint">@color/btn_filled_bg</item>
+        <item name="android:textColor">@color/btn_filled_fg</item>
+        <item name="iconTint">@color/btn_filled_fg</item>
+    </style>
+
+    <style name="Widget.VoiceReader.Button.Dialog">
+        <item name="android:minHeight">52dp</item>
+        <item name="android:layout_marginStart">8dp</item>
+    </style>
+
+    <!-- Icon only: no fill until pressed, then a black block with a white icon. -->
+    <style name="Widget.VoiceReader.IconButton" parent="Widget.Material3.Button.IconButton">
+        <item name="backgroundTint">@color/icon_btn_bg</item>
+        <item name="iconTint">@color/btn_fg</item>
+        <item name="rippleColor">@android:color/transparent</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="cornerRadius">14dp</item>
+        <item name="iconSize">30dp</item>
+    </style>
+
+    <!-- Typography: large on purpose (e-ink, arm's length). One family; contrast through size and weight. -->
+    <style name="Text">
+        <item name="android:fontFamily">sans-serif</item>
+    </style>
+    <style name="Text.Display">
+        <item name="android:textSize">32sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/ink</item>
+    </style>
+    <style name="Text.Title">
+        <item name="android:textSize">22sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/ink</item>
+    </style>
+    <style name="Text.Body">
+        <item name="android:textSize">18sp</item>
+        <item name="android:textColor">@color/ink</item>
+    </style>
+    <style name="Text.Caption">
+        <item name="android:textSize">16sp</item>
+        <item name="android:textColor">@color/inkMuted</item>
+    </style>
+    <style name="Text.Label">
+        <item name="android:textSize">15sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:letterSpacing">0.04</item>
+    </style>
+</resources>

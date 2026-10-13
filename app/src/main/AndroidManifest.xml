@@ -14,8 +14,8 @@
     <application
         android:name=".App"
         android:label="보이스 리더"
-        android:icon="@android:drawable/ic_menu_agenda"
-        android:theme="@style/Theme.AppCompat.DayNight">
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.VoiceReader">
 
         <activity
             android:name=".LibraryActivity"
