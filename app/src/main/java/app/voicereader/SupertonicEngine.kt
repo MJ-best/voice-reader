@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import com.k2fsa.sherpa.onnx.GeneratedAudio
 import com.k2fsa.sherpa.onnx.GenerationConfig
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
@@ -14,12 +15,17 @@ import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsSupertonicModelConfig
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
-import kotlinx.coroutines.Dispatchers
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.thread
+import kotlin.concurrent.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.withContext
 import org.readium.navigator.media.tts.TtsEngine
 import org.readium.navigator.media.tts.TtsEngineProvider
 import org.readium.navigator.media.tts.android.AndroidTtsEngine
@@ -28,7 +34,6 @@ import org.readium.navigator.media.tts.android.AndroidTtsPreferences
 import org.readium.navigator.media.tts.android.AndroidTtsPreferencesEditor
 import org.readium.navigator.media.tts.android.AndroidTtsSettings
 import org.readium.r2.shared.publication.Publication
-import org.readium.r2.shared.util.DebugError
 import org.readium.r2.shared.util.Error
 import org.readium.r2.shared.util.Language
 import org.readium.r2.shared.util.Try
@@ -47,16 +52,27 @@ fun isSupertonicPack(dir: File): Boolean {
         OTHER_FILES.all { it in names }
 }
 
-fun loadSupertonic(dir: File): OfflineTts {
-    fun onnx(part: String) = dir.listFiles()!!.first { it.name.startsWith(part) && it.name.endsWith(".onnx") }.path
-    return OfflineTts(
+/** The language code Supertonic is asked to speak; anything it doesn't know is read as Korean. */
+fun supertonicLanguage(language: Language?): String =
+    language?.code?.substringBefore('-')?.takeIf { it in LANGUAGES } ?: "ko"
+
+/**
+ * Owns a loaded Supertonic model. Synthesizes on one background thread and keeps recent results, so the sentences
+ * coming up are ready before they are read (O-2). Results are keyed by the exact text spoken (after pronunciation
+ * fixes and normalization), language and speed, so a dictionary edit or speed change never replays stale audio.
+ */
+class Synthesizer(dir: File) {
+
+    private data class Key(val text: String, val language: String, val speed: Float)
+
+    private val tts = OfflineTts(
         config = OfflineTtsConfig(
             model = OfflineTtsModelConfig(
                 supertonic = OfflineTtsSupertonicModelConfig(
-                    durationPredictor = onnx("duration_predictor"),
-                    textEncoder = onnx("text_encoder"),
-                    vectorEstimator = onnx("vector_estimator"),
-                    vocoder = onnx("vocoder"),
+                    durationPredictor = onnx(dir, "duration_predictor"),
+                    textEncoder = onnx(dir, "text_encoder"),
+                    vectorEstimator = onnx(dir, "vector_estimator"),
+                    vocoder = onnx(dir, "vocoder"),
                     ttsJson = File(dir, "tts.json").path,
                     unicodeIndexer = File(dir, "unicode_indexer.bin").path,
                     voiceStyle = File(dir, "voice.bin").path,
@@ -65,6 +81,98 @@ fun loadSupertonic(dir: File): OfflineTts {
             ),
         ),
     )
+    private val lock = ReentrantLock()
+    private val changed = lock.newCondition()
+
+    // ponytail: in-memory only (~0.5MB per sentence). Persisting whole chapters to disk only pays off on phones too
+    // slow to synthesize in real time (RTF ≥ 1); add it if the on-device measurement says so.
+    private val results = object : LinkedHashMap<Key, CompletableFuture<GeneratedAudio>>(32, 0.75f, true) {
+        // Only finished results are evicted: a pending one may be awaited by the player.
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, CompletableFuture<GeneratedAudio>>) =
+            size > 32 && eldest.value.isDone
+    }
+    private val wanted = ArrayDeque<Key>() // what to synthesize next, in order
+    private val claimed = mutableSetOf<Key>() // asked for by the player and not done yet: never dropped
+    private var generating: Key? = null
+    @Volatile private var running = true
+    private val worker = thread(name = "supertonic", isDaemon = true) { work() }
+
+    /**
+     * Queues the sentences of the paragraph Readium just loaded. Look-ahead for an earlier paragraph is stale by now,
+     * except sentences the player already asked for: Readium can load the next paragraph before reading the last
+     * sentence of the current one.
+     */
+    fun prefetch(texts: List<String>, language: String, speed: Float) = lock.withLock {
+        wanted.retainAll { it in claimed }
+        texts.map { Key(it, language, speed) }
+            .filter { results[it]?.isDone != true && it != generating && it !in wanted }
+            .forEach { wanted.addLast(it) }
+        changed.signal()
+    }
+
+    /** The audio for the sentence about to be read; jumps the queue if it isn't ready yet. */
+    fun take(text: String, language: String, speed: Float): Future<GeneratedAudio> = lock.withLock {
+        val key = Key(text, language, speed)
+        val audio = results.getOrPut(key) { CompletableFuture() }
+        Log.i("Supertonic", if (audio.isDone) "ready" else "waiting") // "waiting" = an audible gap before this sentence
+        if (!audio.isDone) {
+            claimed += key
+            if (key != generating) {
+                wanted.remove(key)
+                wanted.addFirst(key)
+            }
+            changed.signal()
+        }
+        audio
+    }
+
+    private fun work() {
+        while (true) {
+            val (key, audio) = lock.withLock {
+                while (wanted.isEmpty() && running) changed.await()
+                if (!running) return
+                val key = wanted.removeFirst()
+                generating = key
+                key to results.getOrPut(key) { CompletableFuture() }
+            }
+            if (!audio.isDone) {
+                try {
+                    audio.complete(generate(key))
+                } catch (e: Exception) {
+                    audio.completeExceptionally(e)
+                }
+            }
+            lock.withLock {
+                generating = null
+                claimed -= key
+            }
+        }
+    }
+
+    private fun generate(key: Key): GeneratedAudio {
+        val started = SystemClock.elapsedRealtime()
+        val audio = tts.generateWithConfig(
+            key.text,
+            GenerationConfig(sid = SPEAKER, speed = key.speed, numSteps = STEPS, extra = mapOf("lang" to key.language)),
+        )
+        val seconds = audio.samples.size.toDouble() / audio.sampleRate
+        Log.i("Supertonic", "rtf=%.3f (%.1fs audio)".format((SystemClock.elapsedRealtime() - started) / 1000.0 / seconds, seconds))
+        return audio
+    }
+
+    /** Blocks until the sentence being synthesized (if any) is done, then frees the model. Call off the main thread. */
+    fun release() {
+        lock.withLock {
+            running = false
+            changed.signalAll()
+        }
+        worker.join()
+        tts.release()
+    }
+
+    private companion object {
+        fun onnx(dir: File, part: String) = dir.listFiles()!!.first { it.name.startsWith(part) && it.name.endsWith(".onnx") }.path
+    }
 }
 
 /**
@@ -74,23 +182,18 @@ fun loadSupertonic(dir: File): OfflineTts {
  */
 class SupertonicEngineProvider(
     android: AndroidTtsEngineProvider,
-    private val model: () -> OfflineTts,
+    private val synthesizer: Synthesizer,
 ) : TtsEngineProvider<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsPreferencesEditor, AndroidTtsEngine.Error, AndroidTtsEngine.Voice> by android {
 
     override suspend fun createEngine(
         publication: Publication,
         initialPreferences: AndroidTtsPreferences,
     ): Try<TtsEngine<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsEngine.Error, AndroidTtsEngine.Voice>, Error> =
-        try {
-            val tts = withContext(Dispatchers.IO) { model() } // first load takes a moment; App caches it
-            Try.success(SupertonicEngine(tts, publication.metadata.language, initialPreferences))
-        } catch (e: Exception) {
-            Try.failure(DebugError("Supertonic voice pack failed to load: ${e.message}"))
-        }
+        Try.success(SupertonicEngine(synthesizer, publication.metadata.language, initialPreferences))
 }
 
 private class SupertonicEngine(
-    private val tts: OfflineTts,
+    private val synthesizer: Synthesizer,
     private val bookLanguage: Language?,
     initialPreferences: AndroidTtsPreferences,
 ) : TtsEngine<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsEngine.Error, AndroidTtsEngine.Voice> {
@@ -99,11 +202,11 @@ private class SupertonicEngine(
     override val settings: StateFlow<AndroidTtsSettings> = _settings.asStateFlow()
     override val voices: Set<AndroidTtsEngine.Voice> = emptySet()
 
-    private val worker = Executors.newSingleThreadExecutor()
+    private val player = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private var listener: TtsEngine.Listener<AndroidTtsEngine.Error>? = null
 
-    /** The request allowed to play; stop() or a newer speak() replaces it and the worker bails out. */
+    /** The request allowed to play; stop() or a newer speak() replaces it and the player thread bails out. */
     @Volatile private var current: TtsEngine.RequestId? = null
 
     override fun submitPreferences(preferences: AndroidTtsPreferences) {
@@ -124,15 +227,13 @@ private class SupertonicEngine(
 
     override fun speak(requestId: TtsEngine.RequestId, text: String, language: Language?) {
         current = requestId
-        val lang = (language ?: settings.value.language).code.substringBefore('-').takeIf { it in LANGUAGES } ?: "ko"
-        val config = GenerationConfig(
-            sid = SPEAKER,
-            speed = settings.value.speed.toFloat(),
-            numSteps = STEPS,
-            extra = mapOf("lang" to lang),
+        val audio = synthesizer.take(
+            text,
+            supertonicLanguage(language ?: settings.value.language),
+            settings.value.speed.toFloat(),
         )
-        worker.execute {
-            val finished = runCatching { current == requestId && play(requestId, text, config) }
+        player.execute {
+            val finished = runCatching { play(requestId, audio) }
                 .onFailure { Log.e("Supertonic", "synthesis failed", it) }
             main.post {
                 when {
@@ -147,15 +248,19 @@ private class SupertonicEngine(
         }
     }
 
-    /** Synthesizes then plays [text] on the worker thread. Returns false if stopped or replaced midway. */
-    private fun play(id: TtsEngine.RequestId, text: String, config: GenerationConfig): Boolean {
-        val started = SystemClock.elapsedRealtime()
-        val audio = tts.generateWithConfig(text, config)
+    /** Waits for the (usually prefetched) audio, then plays it. Returns false if stopped or replaced midway. */
+    private fun play(id: TtsEngine.RequestId, pending: Future<GeneratedAudio>): Boolean {
+        var audio: GeneratedAudio? = null
+        while (audio == null) {
+            if (current != id) return false
+            try {
+                audio = pending.get(20, TimeUnit.MILLISECONDS)
+            } catch (e: TimeoutException) {
+                // still synthesizing
+            }
+        }
         val samples = audio.samples
         if (samples.isEmpty()) return true
-        val seconds = samples.size.toDouble() / audio.sampleRate
-        Log.i("Supertonic", "rtf=%.3f (%.1fs audio)".format((SystemClock.elapsedRealtime() - started) / 1000.0 / seconds, seconds))
-        if (current != id) return false
 
         val track = AudioTrack.Builder()
             .setAudioAttributes(
@@ -193,6 +298,6 @@ private class SupertonicEngine(
 
     override fun close() {
         current = null
-        worker.shutdown() // the running request notices within ~20ms; the shared model stays loaded in App
+        player.shutdown() // the running request notices within ~20ms; the Synthesizer (model + cache) lives in App
     }
 }
