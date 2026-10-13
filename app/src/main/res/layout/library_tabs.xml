@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 책장 | 전체: the chosen half is filled black. -->
+<com.google.android.material.button.MaterialButtonToggleGroup xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/tabs"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginHorizontal="6dp"
+    android:layout_marginTop="14dp"
+    android:layout_marginBottom="4dp"
+    app:selectionRequired="true"
+    app:singleSelection="true">
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/tabShelves"
+        android:layout_width="0dp"
+        android:layout_height="56dp"
+        android:layout_weight="1"
+        android:text="책장" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/tabAll"
+        android:layout_width="0dp"
+        android:layout_height="56dp"
+        android:layout_weight="1" />
+</com.google.android.material.button.MaterialButtonToggleGroup>

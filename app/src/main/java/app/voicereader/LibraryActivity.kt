@@ -1,15 +1,22 @@
 package app.voicereader
 
+import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -17,16 +24,39 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.StaggeredGridLayoutManager
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.progressindicator.LinearProgressIndicator
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+
+/** Books per shelf page: paged with ‹ › rather than scrolled sideways (e-ink redraws every scroll frame). */
+private const val PER_SHELF_PAGE = 3
+
+/** What the library list shows, top to bottom. */
+private sealed interface Item {
+    data object Header : Item
+    data object Continue : Item
+    data object Tabs : Item
+    data object NewShelf : Item
+
+    /** A shelf; [shelf] is null for the automatic ones (읽는 중, 분류 안 된 책). */
+    class ShelfRow(val key: String, val title: String, val books: List<Book>, val shelf: Shelf?) : Item
+
+    class Pin(val book: Book) : Item
+}
 
 class LibraryActivity : AppCompatActivity() {
 
     private val app get() = application as App
     private val adapter = Adapter()
+    private var books: List<Book> = emptyList()
+
+    /** Which page of three each shelf shows, by shelf key; kept while the screen lives. */
+    private val shelfPages = mutableMapOf<String, Int>()
 
     private val pickBook = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) lifecycleScope.launch {
@@ -35,10 +65,18 @@ class LibraryActivity : AppCompatActivity() {
         }
     }
 
+    /** Android 8–10: the storage permission dialog. (11+ grants "all files access" in system settings.) */
+    private val storagePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) app.startDeviceScan(announce = true)
+    }
+
+    /** Set while the user is in system settings granting file access; checked when they come back. */
+    private var askedForAllFiles = false
+
     private val pickVoicePack = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) lifecycleScope.launch {
             toast("음성 팩을 설치하는 중…")
-            toast(app.importVoicePack(uri) ?: "음성 팩을 설치했어요. 대화문 목소리는 책을 연 뒤 ⋮ 메뉴에서 고를 수 있어요.")
+            toast(app.importVoicePack(uri) ?: "음성 팩을 설치했어요. 대화문 목소리는 책을 연 뒤 설정 → 낭독에서 고를 수 있어요.")
             refresh()
         }
     }
@@ -51,12 +89,26 @@ class LibraryActivity : AppCompatActivity() {
         grid.layoutManager = StaggeredGridLayoutManager(2, StaggeredGridLayoutManager.VERTICAL)
         grid.adapter = adapter
         grid.itemAnimator = null // no cross-fades: every animation frame is a refresh on e-ink
-        findViewById<View>(R.id.emptyAdd).setOnClickListener { importBook() }
+        findViewById<View>(R.id.emptyFind).setOnClickListener { findOnDevice() }
+        findViewById<View>(R.id.emptyPick).setOnClickListener { importBook() }
+
+        // New EPUBs on the device show up by themselves (quietly, only if file access was granted).
+        if (savedInstanceState == null) app.startDeviceScan(announce = false)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                app.scanProgress.collect { found ->
+                    // Text only, no spinner: a spinner is a refresh per frame on e-ink. The list redraws once at the end.
+                    if (found == null) refresh() else adapter.notifyItemChanged(0)
+                }
+            }
+        }
 
         // Keep the "continue" card's play/pause icon in step with the player.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                app.tts.flatMapLatest { it?.playback ?: flowOf(null) }.collect { adapter.notifyItemChanged(1) }
+                app.tts.flatMapLatest { it?.playback ?: flowOf(null) }.collect {
+                    if (adapter.items.getOrNull(1) == Item.Continue) adapter.notifyItemChanged(1)
+                }
             }
         }
     }
@@ -64,16 +116,74 @@ class LibraryActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refresh()
+        if (askedForAllFiles && app.canReadAllFiles()) {
+            askedForAllFiles = false
+            app.startDeviceScan(announce = true)
+        }
     }
 
     private fun refresh() {
-        adapter.books = app.books.sortedByDescending { it.opened }
+        books = app.books.sortedWith(compareByDescending<Book> { it.opened }.thenBy { it.title })
+        adapter.items = buildList {
+            add(Item.Header)
+            if (books.isEmpty()) return@buildList
+            add(Item.Continue)
+            add(Item.Tabs)
+            if (app.showShelves) addAll(shelves()) else books.mapTo(this) { Item.Pin(it) }
+        }
         adapter.notifyDataSetChanged()
-        findViewById<View>(R.id.empty).isVisible = adapter.books.isEmpty()
+        findViewById<View>(R.id.empty).isVisible = books.isEmpty()
+    }
+
+    /** 읽는 중 (automatic), the user's shelves, then whatever isn't on a shelf yet. */
+    private fun shelves(): List<Item> = buildList {
+        val reading = books.filter { app.progress(it) in 1..99 }
+        if (reading.isNotEmpty()) add(Item.ShelfRow("reading", "읽는 중", reading, null))
+        app.shelves.forEach { shelf -> add(Item.ShelfRow(shelf.id, shelf.name, books.filter { it.id in shelf.bookIds }, shelf)) }
+        val shelved = app.shelves.flatMapTo(HashSet()) { it.bookIds }
+        val loose = books.filter { it.id !in shelved }
+        if (loose.isNotEmpty()) add(Item.ShelfRow("loose", if (app.shelves.isEmpty()) "모든 책" else "분류 안 된 책", loose, null))
+        add(Item.NewShelf)
     }
 
     // Some file pickers label .epub as octet-stream.
     private fun importBook() = pickBook.launch(arrayOf("application/epub+zip", "application/octet-stream"))
+
+    private fun showAddSheet() {
+        Sheet(this, "책 추가").apply {
+            row(
+                "기기에서 모두 찾기",
+                if (app.canReadAllFiles()) "기기 안의 EPUB을 모두 찾아 모아요. 파일은 복사하지 않아요."
+                else "‘모든 파일에 접근’을 허용하면 기기 안의 EPUB을 모두 찾아요",
+                icon = R.drawable.ic_book,
+            ) { findOnDevice() }
+            row("파일 하나 고르기", "고른 EPUB을 서재로 복사해요", icon = R.drawable.ic_add) { importBook() }
+        }.show()
+    }
+
+    private fun findOnDevice() {
+        if (app.canReadAllFiles()) return app.startDeviceScan(announce = true)
+        MaterialAlertDialogBuilder(this)
+            .setTitle("기기의 EPUB 찾기")
+            .setMessage(
+                "기기 안의 EPUB을 모두 찾으려면 ‘모든 파일에 접근’ 권한이 필요해요.\n\n" +
+                    "책 파일을 읽기만 하고, 고치거나 지우거나 기기 밖으로 보내지 않아요. " +
+                    "다음 화면에서 허용한 뒤 돌아오면 바로 찾기 시작해요.",
+            )
+            .setPositiveButton("설정 열기") { _, _ -> requestAllFiles() }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
+    private fun requestAllFiles() {
+        if (Build.VERSION.SDK_INT < 30) return storagePermission.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+        askedForAllFiles = true
+        try {
+            startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
+        } catch (e: ActivityNotFoundException) {
+            startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) // some devices only have the list
+        }
+    }
 
     private fun open(book: Book, autoplay: Boolean = false) = lifecycleScope.launch {
         if (!app.openBook(book)) return@launch toast("책을 열 수 없어요")
@@ -90,10 +200,109 @@ class LibraryActivity : AppCompatActivity() {
         }
     }
 
+    // --- Book and shelf menus ---
+
+    /** Long-press on a book. */
+    private fun showBookActions(book: Book) {
+        val onShelves = app.shelves.filter { book.id in it.bookIds }.joinToString { it.name }
+        Sheet(this, book.title, book.author.ifBlank { null }).apply {
+            row("책장 정하기", onShelves.ifEmpty { "아직 어느 책장에도 없어요" }, icon = R.drawable.ic_shelf) { pickShelves(book) }
+            row(if (book.path != null) "서재에서 빼기" else "서재에서 삭제", icon = R.drawable.ic_delete) { confirmDelete(book) }
+        }.show()
+    }
+
+    private fun pickShelves(book: Book) {
+        Sheet(this, "책장 정하기", "이 책을 넣을 책장을 모두 고르세요").apply {
+            app.shelves.forEach { shelf ->
+                check(shelf.name, "${shelf.bookIds.size}권", book.id in shelf.bookIds) { on ->
+                    if (on) shelf.bookIds += book.id else shelf.bookIds.remove(book.id)
+                    app.saveShelves()
+                }
+            }
+            button("새 책장 만들어 넣기") { nameShelf(null, withBook = book) }
+            onDismiss { refresh() }
+        }.show()
+    }
+
+    private fun showShelfActions(shelf: Shelf) {
+        Sheet(this, shelf.name, "${shelf.bookIds.size}권").apply {
+            row("책 넣고 빼기", icon = R.drawable.ic_check_box) { pickBooks(shelf) }
+            row("이름 바꾸기", icon = R.drawable.ic_text) { nameShelf(shelf) }
+            row("책장 지우기", "책은 서재에 그대로 남아요", icon = R.drawable.ic_delete) { confirmDeleteShelf(shelf) }
+        }.show()
+    }
+
+    private fun pickBooks(shelf: Shelf) {
+        Sheet(this, shelf.name, "이 책장에 둘 책을 모두 고르세요").apply {
+            books.forEach { book ->
+                check(book.title, book.author.ifBlank { null }, book.id in shelf.bookIds) { on ->
+                    if (on) shelf.bookIds += book.id else shelf.bookIds.remove(book.id)
+                    app.saveShelves()
+                }
+            }
+            onDismiss { refresh() }
+        }.show()
+    }
+
+    /** Creates a shelf (optionally putting [withBook] on it), or renames [shelf]. */
+    private fun nameShelf(shelf: Shelf?, withBook: Book? = null) {
+        val field = TextInputLayout(this, null, com.google.android.material.R.attr.textInputOutlinedStyle).apply {
+            hint = "책장 이름 (예: 신앙 서적, 출퇴근용)"
+            addView(TextInputEditText(context).apply {
+                setText(shelf?.name.orEmpty())
+                textSize = 18f
+                isSingleLine = true
+            })
+        }
+        val box = LinearLayout(this).apply {
+            setPadding(dp(24), dp(8), dp(24), 0)
+            addView(field, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(if (shelf == null) "새 책장" else "책장 이름 바꾸기")
+            .setView(box)
+            .setPositiveButton(if (shelf == null) "만들기" else "바꾸기") { _, _ ->
+                val name = field.editText?.text.toString().trim()
+                if (name.isEmpty()) return@setPositiveButton
+                if (shelf != null) {
+                    shelf.name = name
+                    app.saveShelves()
+                } else {
+                    val created = app.addShelf(name)
+                    withBook?.let {
+                        created.bookIds += it.id
+                        app.saveShelves()
+                    }
+                }
+                refresh()
+            }
+            .setNegativeButton("취소", null)
+            .show()
+        field.editText?.requestFocus()
+    }
+
+    private fun confirmDeleteShelf(shelf: Shelf) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle("‘${shelf.name}’ 지우기")
+            .setMessage("책장만 지우고, 그 안의 책은 서재에 그대로 남아요.")
+            .setPositiveButton("지우기") { _, _ ->
+                app.deleteShelf(shelf)
+                refresh()
+            }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
     private fun confirmDelete(book: Book) {
+        // No particle right after the title in these texts: it would depend on the title's last syllable.
+        val message = if (book.path != null) {
+            "서재에서 이 책을 뺄까요? 기기의 파일은 그대로 두고, 다음 찾기에서도 다시 넣지 않아요."
+        } else {
+            "서재에서 이 책을 지울까요? 읽던 위치와 이 책의 발음 사전도 함께 지워져요."
+        }
         MaterialAlertDialogBuilder(this)
             .setTitle("‘${book.title}’ 삭제")
-            .setMessage("서재에서 이 책을 지울까요? 읽던 위치와 이 책의 발음 사전도 함께 지워져요.") // no particle after the title: it depends on the last syllable
+            .setMessage(message)
             .setPositiveButton("삭제") { _, _ ->
                 app.deleteBook(book)
                 refresh()
@@ -103,7 +312,7 @@ class LibraryActivity : AppCompatActivity() {
     }
 
     private fun showVoices() {
-        Sheet(this, "낭독 음성", "모든 책의 서술에 쓰는 목소리예요. 대화문 목소리는 책을 연 뒤 ⋮ 메뉴에서 따로 고를 수 있어요.").apply {
+        Sheet(this, "낭독 음성", "모든 책의 서술에 쓰는 목소리예요. 대화문 목소리는 책을 연 뒤 설정 → 낭독에서 따로 고를 수 있어요.").apply {
             row("기기 기본 음성", "Android TTS", icon = R.drawable.ic_voice, checked = app.activeVoice == null) {
                 app.activeVoice = null
                 refresh()
@@ -145,73 +354,156 @@ class LibraryActivity : AppCompatActivity() {
         }
     }
 
-    /** Header, then a full-width "continue" card for the latest book, then every book as a pin. */
     private inner class Adapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
-        var books: List<Book> = emptyList()
+        var items: List<Item> = emptyList()
 
-        override fun getItemCount() = if (books.isEmpty()) 1 else books.size + 2
+        override fun getItemCount() = items.size
 
-        override fun getItemViewType(position: Int) = when (position) {
-            0 -> R.layout.library_header
-            1 -> R.layout.library_continue
-            else -> R.layout.library_item
+        override fun getItemViewType(position: Int) = when (items[position]) {
+            Item.Header -> R.layout.library_header
+            Item.Continue -> R.layout.library_continue
+            Item.Tabs -> R.layout.library_tabs
+            Item.NewShelf -> R.layout.library_new_shelf
+            is Item.ShelfRow -> R.layout.library_shelf
+            is Item.Pin -> R.layout.library_item
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
-            val view = LayoutInflater.from(parent.context).inflate(viewType, parent, false)
+            val inflater = LayoutInflater.from(parent.context)
+            val view = inflater.inflate(viewType, parent, false)
             if (viewType != R.layout.library_item) {
                 view.layoutParams = StaggeredGridLayoutManager.LayoutParams(view.layoutParams).apply { isFullSpan = true }
+            }
+            if (viewType == R.layout.library_shelf) {
+                val covers = view.findViewById<LinearLayout>(R.id.covers)
+                val titles = view.findViewById<LinearLayout>(R.id.titles)
+                repeat(PER_SHELF_PAGE) {
+                    covers.addView(inflater.inflate(R.layout.shelf_cover, covers, false))
+                    titles.addView(TextView(parent.context).apply {
+                        textSize = 15f
+                        setTextColor(getColor(R.color.ink))
+                        maxLines = 2
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        setPadding(dp(5), 0, dp(5), 0)
+                    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                }
             }
             return object : RecyclerView.ViewHolder(view) {}
         }
 
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             val view = holder.itemView
-            when (getItemViewType(position)) {
-                R.layout.library_header -> {
-                    view.findViewById<TextView>(R.id.count).text = if (books.isEmpty()) "" else "${books.size}권"
-                    view.findViewById<View>(R.id.actions).isVisible = books.isNotEmpty() // empty state has its own button
-                    view.findViewById<MaterialButton>(R.id.voice).apply {
-                        text = app.activeVoice?.let(::voiceLabel) ?: "기기 음성"
-                        setOnClickListener { showVoices() }
+            when (val item = items[position]) {
+                Item.Header -> bindHeader(view)
+                Item.Continue -> bindContinue(view, books.first())
+                Item.Tabs -> bindTabs(view)
+                Item.NewShelf -> view.findViewById<View>(R.id.newShelf).setOnClickListener { nameShelf(null) }
+                is Item.ShelfRow -> bindShelf(view, item, position)
+                is Item.Pin -> bindPin(view, item.book)
+            }
+        }
+
+        private fun bindHeader(view: View) {
+            view.findViewById<TextView>(R.id.count).text = app.scanProgress.value?.let { "찾는 중… 새 책 ${it}권" }
+                ?: if (books.isEmpty()) "" else "${books.size}권"
+            view.findViewById<View>(R.id.actions).isVisible = books.isNotEmpty() // the empty state has its own buttons
+            view.findViewById<MaterialButton>(R.id.voice).apply {
+                text = app.activeVoice?.let(::voiceLabel) ?: "기기 음성"
+                setOnClickListener { showVoices() }
+            }
+            view.findViewById<View>(R.id.add).setOnClickListener { showAddSheet() }
+        }
+
+        private fun bindContinue(view: View, book: Book) {
+            val progress = app.progress(book)
+            val playing = app.book?.id == book.id && app.tts.value?.playback?.value?.playWhenReady == true
+            bindCover(book, view.findViewById(R.id.cover))
+            view.findViewById<TextView>(R.id.label).text = when {
+                playing -> "지금 듣는 중"
+                progress == null -> "읽기 시작"
+                else -> "이어 듣기"
+            }
+            view.findViewById<TextView>(R.id.title).text = book.title
+            view.findViewById<TextView>(R.id.meta).text = meta(book)
+            view.findViewById<LinearProgressIndicator>(R.id.progress).apply {
+                isVisible = progress != null
+                setProgressCompat(progress ?: 0, false)
+            }
+            view.findViewById<MaterialButton>(R.id.play).apply {
+                setIconResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play)
+                contentDescription = if (playing) "일시정지" else "이어 듣기"
+                setOnClickListener { playOrPause(book) }
+            }
+            view.setOnClickListener { open(book) }
+        }
+
+        private fun bindTabs(view: View) {
+            view.findViewById<MaterialButton>(R.id.tabAll).text = "전체 ${books.size}"
+            view.findViewById<MaterialButtonToggleGroup>(R.id.tabs).apply {
+                clearOnButtonCheckedListeners()
+                check(if (app.showShelves) R.id.tabShelves else R.id.tabAll)
+                addOnButtonCheckedListener { _, id, checked ->
+                    if (checked && (id == R.id.tabShelves) != app.showShelves) {
+                        app.showShelves = id == R.id.tabShelves
+                        post { refresh() } // not from inside this bind
                     }
-                    view.findViewById<View>(R.id.add).setOnClickListener { importBook() }
                 }
-                R.layout.library_continue -> {
-                    val book = books.first()
-                    val progress = app.progress(book)
-                    val playing = app.book?.id == book.id && app.tts.value?.playback?.value?.playWhenReady == true
-                    bindCover(book, view.findViewById(R.id.cover))
-                    view.findViewById<TextView>(R.id.label).text = when {
-                        playing -> "지금 듣는 중"
-                        progress == null -> "읽기 시작"
-                        else -> "이어 듣기"
-                    }
-                    view.findViewById<TextView>(R.id.title).text = book.title
-                    view.findViewById<TextView>(R.id.meta).text = meta(book)
-                    view.findViewById<LinearProgressIndicator>(R.id.progress).apply {
-                        isVisible = progress != null
-                        setProgressCompat(progress ?: 0, false)
-                    }
-                    view.findViewById<MaterialButton>(R.id.play).apply {
-                        setIconResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play)
-                        contentDescription = if (playing) "일시정지" else "이어 듣기"
-                        setOnClickListener { playOrPause(book) }
-                    }
-                    view.setOnClickListener { open(book) }
+            }
+        }
+
+        private fun bindShelf(view: View, row: Item.ShelfRow, position: Int) {
+            val lastPage = ((row.books.size - 1) / PER_SHELF_PAGE).coerceAtLeast(0)
+            val page = (shelfPages[row.key] ?: 0).coerceIn(0, lastPage)
+            val shown = row.books.drop(page * PER_SHELF_PAGE).take(PER_SHELF_PAGE)
+            view.findViewById<TextView>(R.id.name).text = row.title
+            view.findViewById<TextView>(R.id.count).text =
+                if (lastPage == 0) "${row.books.size}권" else "${row.books.size}권 · ${page + 1}/${lastPage + 1}"
+            fun turn(delta: Int) {
+                shelfPages[row.key] = page + delta
+                notifyItemChanged(position) // only this shelf redraws
+            }
+            view.findViewById<View>(R.id.prevPage).apply {
+                isInvisible = page == 0
+                setOnClickListener { turn(-1) }
+            }
+            view.findViewById<View>(R.id.nextPage).apply {
+                isInvisible = page == lastPage
+                setOnClickListener { turn(1) }
+            }
+            view.findViewById<View>(R.id.more).apply {
+                isVisible = row.shelf != null
+                setOnClickListener { row.shelf?.let(::showShelfActions) }
+            }
+            view.findViewById<View>(R.id.empty).isVisible = row.books.isEmpty()
+            val covers = view.findViewById<LinearLayout>(R.id.covers)
+            val titles = view.findViewById<LinearLayout>(R.id.titles)
+            for (i in 0 until PER_SHELF_PAGE) {
+                val slot = covers.getChildAt(i)
+                val title = titles.getChildAt(i) as TextView
+                val book = shown.getOrNull(i)
+                slot.isInvisible = book == null
+                title.isInvisible = book == null
+                if (book == null) continue
+                bindCover(book, slot.findViewById(R.id.cover), slot.findViewById(R.id.placeholder))
+                title.text = book.title
+                slot.contentDescription = book.title
+                slot.setOnClickListener { open(book) }
+                slot.setOnLongClickListener {
+                    showBookActions(book)
+                    true
                 }
-                else -> {
-                    val book = books[position - 2]
-                    bindCover(book, view.findViewById(R.id.cover), view.findViewById(R.id.placeholder))
-                    view.findViewById<TextView>(R.id.title).text = book.title
-                    view.findViewById<TextView>(R.id.meta).text = meta(book)
-                    view.setOnClickListener { open(book) }
-                    view.setOnLongClickListener {
-                        confirmDelete(book)
-                        true
-                    }
-                }
+            }
+        }
+
+        private fun bindPin(view: View, book: Book) {
+            bindCover(book, view.findViewById(R.id.cover), view.findViewById(R.id.placeholder))
+            view.findViewById<TextView>(R.id.title).text = book.title
+            view.findViewById<TextView>(R.id.meta).text = meta(book)
+            view.setOnClickListener { open(book) }
+            view.setOnLongClickListener {
+                showBookActions(book)
+                true
             }
         }
     }

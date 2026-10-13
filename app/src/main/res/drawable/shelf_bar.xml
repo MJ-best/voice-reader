@@ -1,0 +1,5 @@
+<!-- The plank the covers stand on: a solid black bar, crisp on e-ink. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/ink" />
+    <corners android:radius="3dp" />
+</shape>

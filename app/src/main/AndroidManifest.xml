@@ -1,8 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- Finding every EPUB on the device (read in place). Android 11+: "all files access", granted by the user in
+         system settings; this is a sideloaded reader, not a Play Store app. Older versions: the storage permission. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
 
     <!-- Android 11+: needed to see the system TTS engine. -->
     <queries>
@@ -15,6 +25,7 @@
         android:name=".App"
         android:label="보이스 리더"
         android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true"
         android:theme="@style/Theme.VoiceReader">
 
         <activity

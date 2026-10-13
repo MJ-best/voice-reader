@@ -45,16 +45,21 @@
             android:layout_marginTop="8dp"
             android:gravity="center"
             android:lineSpacingMultiplier="1.3"
-            android:text="DRM 없는 EPUB을 가져오면 이곳에 모이고, 원하는 목소리로 읽어 드려요." />
+            android:text="기기 안의 DRM 없는 EPUB을 모두 찾아 이곳에 모으고, 원하는 목소리로 읽어 드려요." />
 
         <com.google.android.material.button.MaterialButton
-            android:id="@+id/emptyAdd"
+            android:id="@+id/emptyFind"
             style="@style/Widget.VoiceReader.Button.Filled"
             android:layout_width="match_parent"
             android:layout_height="64dp"
             android:layout_marginTop="28dp"
-            android:text="EPUB 가져오기"
-            app:icon="@drawable/ic_add"
-            app:iconGravity="textStart" />
+            android:text="기기에서 EPUB 찾기" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/emptyPick"
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:layout_marginTop="12dp"
+            android:text="파일 하나 고르기" />
     </LinearLayout>
 </FrameLayout>

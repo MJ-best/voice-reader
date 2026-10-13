@@ -1,11 +1,16 @@
 package app.voicereader
 
+import android.Manifest
 import android.app.Application
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.storage.StorageManager
 import android.provider.OpenableColumns
 import android.util.AtomicFile
 import android.util.Log
@@ -85,7 +90,20 @@ private class ChapterSkipPlayer(player: Player, private val skip: (Int) -> Unit)
     override fun seekToPreviousMediaItem() = skip(-1)
 }
 
-class Book(val id: String, val title: String, val author: String, var opened: Long, var locator: Locator?)
+/** A book in the library. [path] is set for an EPUB found on the device and read in place (not copied). */
+class Book(
+    val id: String,
+    val title: String,
+    val author: String,
+    var opened: Long,
+    var locator: Locator?,
+    val path: String? = null,
+)
+
+/** A user-made group of books (책장). A book can sit on several shelves. */
+class Shelf(val id: String, var name: String, val bookIds: MutableList<String>)
+
+private enum class Added { YES, DUPLICATE, DRM, UNREADABLE }
 
 fun Context.toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
@@ -127,7 +145,7 @@ class App : Application(), TtsNavigator.Listener {
         private set
     private var ttsJob: Job? = null
 
-    fun epub(book: Book) = File(dir, "${book.id}.epub")
+    fun epub(book: Book) = book.path?.let(::File) ?: File(dir, "${book.id}.epub")
     fun cover(book: Book) = File(dir, "${book.id}.jpg")
 
     // --- Library ---
@@ -148,31 +166,139 @@ class App : Application(), TtsNavigator.Listener {
         val copied = withContext(Dispatchers.IO) {
             contentResolver.openInputStream(uri)?.use { input -> file.outputStream().use { input.copyTo(it) } } != null
         }
-        if (!copied) return "파일을 읽을 수 없습니다"
-
-        val pub = open(file)
-        val drm = pub != null && (pub.isRestricted || withContext(Dispatchers.IO) { hasUnknownDrm(file) })
-        if (pub == null || drm) {
-            pub?.close()
-            file.delete()
-            return if (pub == null) "EPUB 파일을 열 수 없습니다" else "DRM이 걸린 책은 열 수 없습니다"
+        if (!copied) return "파일을 읽을 수 없어요"
+        val error = when (addBook(id, file, path = null)) {
+            Added.YES, Added.DUPLICATE -> null
+            Added.DRM -> "DRM이 걸린 책은 열 수 없어요"
+            Added.UNREADABLE -> "EPUB 파일을 열 수 없어요"
         }
-        val book = Book(
-            id = id,
-            title = pub.metadata.title ?: "제목 없음",
-            author = pub.metadata.authors.joinToString { it.name },
-            opened = System.currentTimeMillis(),
-            locator = null,
-        )
-        pub.coverFitting(Size(300, 450))?.let { bitmap ->
-            withContext(Dispatchers.IO) {
-                cover(book).outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+        if (error != null) file.delete() else saveBooks()
+        return error
+    }
+
+    /**
+     * Opens [file], turns away DRM, and adds the book with its title, author and cover. A device file ([path] set)
+     * already in the library under the same title and author (e.g. imported earlier) is a duplicate.
+     */
+    private suspend fun addBook(id: String, file: File, path: String?): Added {
+        val pub = open(file) ?: return Added.UNREADABLE
+        try {
+            if (pub.isRestricted || withContext(Dispatchers.IO) { hasUnknownDrm(file) }) return Added.DRM
+            val title = pub.metadata.title ?: path?.let { File(it).nameWithoutExtension } ?: "제목 없음"
+            val author = pub.metadata.authors.joinToString { it.name }
+            if (path != null && books.any { it.title == title && it.author == author }) return Added.DUPLICATE
+            // Found on the device = not opened yet: it goes after the books being read.
+            val book = Book(id, title, author, opened = if (path == null) System.currentTimeMillis() else 0, locator = null, path = path)
+            pub.coverFitting(Size(300, 450))?.let { bitmap ->
+                withContext(Dispatchers.IO) {
+                    cover(book).outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+                }
+            }
+            books += book
+            return Added.YES
+        } finally {
+            pub.close()
+        }
+    }
+
+    // --- Shelves ---
+
+    private val shelvesFile by lazy { File(dir, "shelves.json") }
+    val shelves: MutableList<Shelf> by lazy { loadShelves() }
+
+    private fun loadShelves(): MutableList<Shelf> {
+        val array = JSONArray(shelvesFile.readAtomically() ?: return mutableListOf())
+        return MutableList(array.length()) { i ->
+            with(array.getJSONObject(i)) {
+                val ids = getJSONArray("books")
+                Shelf(getString("id"), getString("name"), MutableList(ids.length()) { ids.getString(it) })
             }
         }
-        pub.close()
-        books += book
-        saveBooks()
-        return null
+    }
+
+    fun saveShelves() = shelvesFile.writeAtomically(
+        JSONArray(shelves.map { JSONObject().put("id", it.id).put("name", it.name).put("books", JSONArray(it.bookIds)) }).toString(),
+    )
+
+    fun addShelf(name: String): Shelf = Shelf(UUID.randomUUID().toString(), name, mutableListOf()).also {
+        shelves += it
+        saveShelves()
+    }
+
+    fun deleteShelf(shelf: Shelf) {
+        shelves.remove(shelf)
+        saveShelves()
+    }
+
+    /** The library shows shelves (true) or every book in one grid. */
+    var showShelves: Boolean
+        get() = prefs.getBoolean("showShelves", true)
+        set(value) = prefs.edit().putBoolean("showShelves", value).apply()
+
+    // --- Device scan: every EPUB on the device, read in place ---
+
+    /** Books added so far while a device scan runs; null when idle. */
+    val scanProgress = MutableStateFlow<Int?>(null)
+
+    /** Device files never to list again: removed by the user, or DRM / duplicate / unreadable last time. */
+    private var skippedPaths: Set<String>
+        get() = prefs.getStringSet("skippedPaths", emptySet())!!
+        set(value) = prefs.edit().putStringSet("skippedPaths", value).apply()
+
+    /** Android 11+ needs "all files access" to see other apps' documents; older versions the storage permission. */
+    fun canReadAllFiles(): Boolean =
+        if (Build.VERSION.SDK_INT >= 30) Environment.isExternalStorageManager()
+        else checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+
+    private fun storageRoots(): List<File> =
+        if (Build.VERSION.SDK_INT >= 30) {
+            getSystemService(StorageManager::class.java).storageVolumes.mapNotNull { it.directory }
+        } else {
+            // Internal storage plus SD cards, found through this app's folder on each volume.
+            listOf(Environment.getExternalStorageDirectory()) +
+                getExternalFilesDirs(null).drop(1).mapNotNull { dir -> dir?.path?.substringBefore("/Android/")?.let(::File) }
+        }
+
+    /**
+     * Adds every EPUB on the device that isn't listed yet. Runs in the app scope, so leaving the screen doesn't stop
+     * it; [announce] shows the result even when nothing new turned up (a scan the user asked for).
+     */
+    fun startDeviceScan(announce: Boolean) {
+        if (scanProgress.value != null || !canReadAllFiles()) return
+        scanProgress.value = 0
+        scope.launch {
+            var added = 0
+            var drm = 0
+            try {
+                val files = withContext(Dispatchers.IO) { findEpubs(storageRoots()) }
+                val known = books.mapNotNullTo(HashSet()) { it.path } + skippedPaths
+                val skipped = HashSet<String>()
+                for (file in files.filter { it.path !in known }) {
+                    when (addBook(UUID.randomUUID().toString(), file, file.path)) {
+                        Added.YES -> {
+                            added++
+                            scanProgress.value = added
+                            if (added % 10 == 0) saveBooks()
+                        }
+                        Added.DRM -> {
+                            drm++
+                            skipped += file.path
+                        }
+                        Added.DUPLICATE, Added.UNREADABLE -> skipped += file.path
+                    }
+                }
+                saveBooks()
+                skippedPaths = skippedPaths + skipped
+            } finally {
+                scanProgress.value = null
+            }
+            if (added > 0 || announce) {
+                toast(
+                    (if (added > 0) "기기에서 새 책 ${added}권을 찾았어요" else "새로 찾은 책이 없어요") +
+                        if (drm > 0) " (DRM ${drm}권 제외)" else "",
+                )
+            }
+        }
     }
 
     suspend fun openBook(book: Book): Boolean {
@@ -209,7 +335,11 @@ class App : Application(), TtsNavigator.Listener {
         }
         books.removeAll { it.id == book.id }
         saveBooks()
-        listOf(epub(book), cover(book), bookWordsFile(book)).forEach { it.delete() }
+        shelves.forEach { it.bookIds.remove(book.id) }
+        saveShelves()
+        // A device file stays where it is (it's the user's); it is only kept out of future scans.
+        if (book.path != null) skippedPaths = skippedPaths + book.path else epub(book).delete()
+        listOf(cover(book), bookWordsFile(book)).forEach { it.delete() }
         prefs.edit().remove("dialogueVoice:${book.id}").apply()
     }
 
@@ -220,6 +350,7 @@ class App : Application(), TtsNavigator.Listener {
                 Book(
                     getString("id"), getString("title"), getString("author"), getLong("opened"),
                     optJSONObject("locator")?.let { Locator.fromJSON(it) },
+                    optString("path").takeIf { it.isNotEmpty() },
                 )
             }
         }
@@ -229,7 +360,7 @@ class App : Application(), TtsNavigator.Listener {
     private fun saveBooks() {
         val array = JSONArray(books.map {
             JSONObject().put("id", it.id).put("title", it.title).put("author", it.author)
-                .put("opened", it.opened).put("locator", it.locator?.toJSON())
+                .put("opened", it.opened).put("locator", it.locator?.toJSON()).put("path", it.path)
         })
         index.writeAtomically(array.toString())
     }

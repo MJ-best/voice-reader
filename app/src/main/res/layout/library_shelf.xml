@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A shelf: name and count, ‹ › to page through it three books at a time (no sideways scrolling, which e-ink
+  redraws frame by frame), the covers standing on a black plank, titles underneath.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingHorizontal="6dp"
+    android:paddingTop="22dp"
+    android:paddingBottom="6dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/name"
+                style="@style/Text.Title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:singleLine="true" />
+
+            <TextView
+                android:id="@+id/count"
+                style="@style/Text.Caption"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/prevPage"
+            style="@style/Widget.VoiceReader.IconButton"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:contentDescription="이전 책들"
+            app:icon="@drawable/ic_chevron_left" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/nextPage"
+            style="@style/Widget.VoiceReader.IconButton"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:contentDescription="다음 책들"
+            app:icon="@drawable/ic_chevron_right" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/more"
+            style="@style/Widget.VoiceReader.IconButton"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:contentDescription="책장 메뉴"
+            app:icon="@drawable/ic_more" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="176dp"
+        android:layout_marginTop="12dp">
+
+        <LinearLayout
+            android:id="@+id/covers"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:paddingHorizontal="8dp" />
+
+        <TextView
+            android:id="@+id/empty"
+            style="@style/Text.Caption"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:paddingHorizontal="24dp"
+            android:text="비어 있는 책장이에요. ⋯ 메뉴에서 책을 넣어 보세요."
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="8dp"
+        android:background="@drawable/shelf_bar" />
+
+    <LinearLayout
+        android:id="@+id/titles"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal"
+        android:paddingHorizontal="8dp" />
+</LinearLayout>

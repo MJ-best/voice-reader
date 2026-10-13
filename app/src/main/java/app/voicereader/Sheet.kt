@@ -102,6 +102,48 @@ class Sheet(private val context: Context, title: String, hint: String? = null) {
         })
     }
 
+    /** A row with a check box, for picking several things at once. Toggles in place; the sheet stays open. */
+    fun check(title: String, subtitle: String?, checked: Boolean, onChange: (Boolean) -> Unit): Sheet = apply {
+        var on = checked
+        val box = ImageView(context).apply {
+            setImageResource(if (on) R.drawable.ic_check_box else R.drawable.ic_check_box_blank)
+            imageTintList = context.getColorStateList(R.color.row_fg)
+            isDuplicateParentStateEnabled = true
+            layoutParams = LinearLayout.LayoutParams(context.dp(30), context.dp(30)).apply { marginEnd = context.dp(16) }
+        }
+        column.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = context.dp(64)
+            setPadding(context.dp(16), context.dp(10), context.dp(16), context.dp(10))
+            setBackgroundResource(R.drawable.row_bg)
+            setOnClickListener {
+                on = !on
+                box.setImageResource(if (on) R.drawable.ic_check_box else R.drawable.ic_check_box_blank)
+                box.contentDescription = if (on) "선택됨" else "선택 안 됨"
+                onChange(on)
+            }
+            addView(box)
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                isDuplicateParentStateEnabled = true
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                addView(text(title, R.style.Text_Body).apply {
+                    setTextColor(context.getColorStateList(R.color.row_fg))
+                    isDuplicateParentStateEnabled = true
+                })
+                subtitle?.let {
+                    addView(text(it, R.style.Text_Caption).apply {
+                        setTextColor(context.getColorStateList(R.color.row_fg_muted))
+                        isDuplicateParentStateEnabled = true
+                    })
+                }
+            })
+        })
+    }
+
+    fun onDismiss(block: () -> Unit): Sheet = apply { dialog.setOnDismissListener { block() } }
+
     /** A small heading with a rule above it, to group what follows. */
     fun section(title: String): Sheet = apply {
         column.addView(View(context).apply {
