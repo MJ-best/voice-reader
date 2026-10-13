@@ -1,0 +1,83 @@
+# 0단계 게이트: 온디바이스 한국어 TTS 기본 모델 비교
+
+**추천: 기본 모델은 Supertonic 2 int8(sherpa-onnx)로 정합니다.** ASR로 잰 품질은 Supertonic 3과 같고(정규화 CER 0.104 대 0.103), 속도는 5배 빠르고(RTF 0.036 대 0.182), 크기는 49MB 작습니다. 라이선스가 OpenRAIL-M이라 앱 번들도 됩니다. Supertonic 3은 sherpa-onnx 설정에서 파일 경로만 바꾸면 되므로, 사람이 들어 보고 실기기 RTF를 잰 뒤 바꿀지 정합니다.
+
+- 측정일 2026-10-13. Apple M4 맥에서 sherpa-onnx 1.13.8, onnxruntime 1.31.0, 스레드 2개로 측정했습니다.
+- 재현 방법은 `spike/compare_tts.py`의 docstring을 따르면 됩니다(venv와 모델은 `~/.cache/epub-tts-spike`에 둡니다). 실행 한 번에 약 10분 걸립니다.
+- 산출물: `spike/out/<후보>/NN_raw.wav`, `NN_norm.wav`, `detail.json`, `spike/out/summary.json` (git에서 제외).
+
+## 방법
+
+- 테스트 문장 30개: 숫자·날짜·단위 9, 영어 섞임 6, 고유명사 4, 따옴표 대화 5, 음운 변동 2, 긴 문장(60~150자) 4.
+- **raw**는 원문 그대로, **norm**은 숫자·영어를 사람이 한글 읽기형으로 바꾼 입력입니다(1~15번만). norm은 앱의 `korean` 정규화기가 제대로 동작할 때 모델이 받게 될 입력에 해당합니다.
+- 합성은 노이즈를 샘플링하므로 결과가 확률적입니다. 그래서 같은 입력을 3번씩 합성했습니다. wav는 첫 번째 것만 저장합니다.
+- **RTF**는 합성 시간을 오디오 길이로 나눈 값이며, 워밍업 1회는 빼고 쟀습니다.
+- **CER**은 사람 귀를 대신하는 지표입니다. 한국어 Zipformer ASR(KsponSpeech로 학습, int8)로 받아쓰고, 공백과 문장부호를 뺀 뒤 글자 단위 편집 거리를 냅니다. ASR이 숫자를 아라비아 숫자로 쓰기도 해서, 원문과 읽기형 중 CER이 낮은 쪽을 씁니다.
+  - ASR 자체에도 오류가 있으므로 CER은 후보끼리 비교하는 상대값입니다. 절대 품질로 읽으면 안 됩니다.
+  - 처음 쓴 SenseVoice int8(2025-09-09)은 모델에 딸린 `ko.wav`도 제대로 받아쓰지 못해 버렸습니다.
+
+## 결과표
+
+| 후보 | 런타임 | 크기 | 샘플레이트 | RTF (최대) | CER raw | CER norm | 큰 실패율¹ | 기기 내 G2P | 라이선스 (번들) | 파인튜닝 경로 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **Supertonic 2 int8** | sherpa-onnx | 96MB | 44.1kHz | **0.036** (0.059) | 0.138 | 0.104 | 6.7%² | **불필요** (한글을 NFKD로 자모 분해 → 문자 인덱스) | OpenRAIL-M, 재배포·수정 허용 (가능) | 공식 없음³ |
+| Supertonic 3 int8 | sherpa-onnx | 145MB | 44.1kHz | 0.182 (0.220) | 0.154 | 0.103 | 6.7%² | **불필요** (같은 방식) | OpenRAIL-M, 재배포·수정 허용 (가능) | 공식 없음³ |
+| Mimic3 ko_KO kss_low (VITS) | sherpa-onnx | 81MB (모델 60 + espeak-ng-data 18) | 22.05kHz | 0.043 (0.055) | 0.424 | 0.308 | 50% | espeak-ng (sherpa-onnx 내장, 한국어 규칙이 약함) | 가중치는 CC0 표기지만 학습 데이터 KSS가 CC BY-NC-SA 4.0 (**회색이라 보수적으로 불가**) | ONNX만 공개, PyTorch 체크포인트 없음 → Piper/VITS로 처음부터 학습해야 함 |
+| MMS-kor (facebook/mms-tts-kor, VITS) | onnxruntime⁴ | 114MB (fp32; 양자화 38MB 있음) | 16kHz | 0.203 (0.234) | 0.365 | 0.245 | 32% | uroman 로마자화 필요 (sherpa-onnx에 없어 Kotlin 이식 필요). 숫자는 vocab에 없어 그냥 빠짐 | CC BY-NC 4.0 (**불가**, 비교용) | **있음**: [finetune-hf-vits](https://github.com/ylacombe/finetune-hf-vits)(MIT), 80~150문장, GPU 1장 약 20분. 파생물도 NC |
+
+¹ norm 입력(1~15번은 norm, 나머지는 raw)으로 한 합성 90회 중 CER이 0.3을 넘은 비율입니다.
+² Supertonic의 큰 실패 6건 중 #5, #6은 **ASR 탓이었습니다**. 실패한 wav를 반으로 잘라 받아쓰면 빠졌던 `6월 25일에 끝난다`가 그대로 들어 있었습니다(ASR이 중간을 삭제한 것). 그래서 이 수치는 상한입니다.
+³ Supertone은 학습 코드를 공개하지 않았습니다. 커스텀 목소리는 유료 [Voice Builder](https://supertonic.supertone.ai/voice_builder)에 음성을 올려 스타일 임베딩 JSON을 받는 방식이고, Supertonic 2와 3 둘 다 지원합니다. 받은 JSON은 sherpa-onnx `generate_voices_bin.py`로 `voice.bin`에 넣어 오프라인으로 쓸 수 있습니다. 비공식 PyTorch 재구현인 [supertonic-pytorch](https://github.com/chantysothy/supertonic-pytorch)(v2, 학습 스크립트 포함)가 있지만 실험 단계입니다.
+⁴ sherpa-onnx에는 kor용 MMS 변환본이 없고, 다시 변환하려면 torch가 필요합니다. 그래서 같은 가중치를 transformers.js로 내보낸 ONNX(`Xenova/mms-tts-kor`)를 onnxruntime으로 직접 돌렸습니다. 토크나이저 처리(uroman, 소문자화, add_blank)는 스크립트에서 재현했습니다.
+
+### 문장 종류별 CER (3회 평균)
+
+| 후보 | 숫자 raw | 숫자 norm | 영어 raw | 영어 norm | 고유명사 | 대화문 | 음운 변동 | 긴 문장 |
+|---|---|---|---|---|---|---|---|---|
+| Supertonic 2 | 0.244 | 0.184 | 0.157 | 0.075 | 0.112 | 0.034 | 0.045 | 0.075 |
+| Supertonic 3 | 0.251 | 0.173 | 0.206 | 0.065 | 0.116 | 0.075 | 0.044 | 0.051 |
+| Mimic3 KSS | 0.476 | 0.340 | 0.639 | 0.258 | 0.389 | 0.255 | 0.183 | 0.355 |
+| MMS-kor | 0.581 | 0.303 | 0.415 | 0.230 | 0.296 | 0.154 | 0.197 | 0.221 |
+
+## 청취 소감 메모
+
+> 이 세션은 소리를 들을 수 없어서 아래 메모는 **ASR 받아쓰기 결과를 읽고 쓴 것**입니다. 사람이 직접 들은 소감 칸은 비워 두었습니다.
+
+- **Supertonic 2/3**: 자연문은 거의 원문대로 받아써집니다(긴 문장 CER 0.05~0.08, 대화문의 `?`와 `!` 억양 문장도 통과). 음운 변동(같이, 국물, 신라, 닭값)도 맞게 읽습니다.
+  - raw 숫자는 일부 혼자 읽습니다(`오후 3시 45분` 정상). 하지만 `12,800원`, `500ml`, `010-1234-5678`은 틀리므로 정규화기가 반드시 필요합니다.
+  - raw 영어는 `Harry Potter`를 '헬파를'처럼 읽고, 한글 표기로 바꾸면 정상입니다.
+  - 두 모델 차이는 ASR 오차 안쪽이라 구분할 수 없습니다.
+- **Mimic3 KSS**: espeak-ng 한국어 G2P가 약해 자연문도 단어가 뭉개집니다('관자놀이모여', '무료길드'). 22kHz 저품질 보이스라 탈락입니다.
+- **MMS-kor**: 자연문은 알아들을 수 있지만 받침과 모음이 자주 흔들립니다('굶으를', '친한행동안'). 16kHz이고 숫자는 소리 없이 빠집니다. 라이선스 문제도 있어 탈락입니다.
+
+| 후보 | 사람 청취 소감 (TODO) |
+|---|---|
+| Supertonic 2 (F1) | |
+| Supertonic 3 (F1) | |
+| Mimic3 KSS | |
+| MMS-kor | |
+
+먼저 들어 볼 파일: `out/*/27_raw.wav`~`30_raw.wav`(긴 문장 운율), `05_norm.wav`, `08_norm.wav`(빽빽한 숫자), `20_raw.wav`, `23_raw.wav`(의문·감탄 억양).
+
+## 근거와 남은 결정
+
+1. **품질**: 공개된 온디바이스 후보 중 Supertonic 계열이 확실히 앞섭니다(norm CER 0.10 대 0.25~0.31). 2와 3 사이 차이는 이 측정으로는 보이지 않습니다.
+2. **속도**: Supertonic 3은 같은 스텝 수에서 2보다 5~8배 느립니다.
+   - fp32 `vector_estimator`로 바꿔도 같은 속도(steps 8에서 0.163 대 0.159)였으니 int8 양자화 탓이 아니라 모델 구조 탓입니다.
+   - 스레드를 4개로 늘려도 빨라지지 않았습니다.
+   - steps 4로 낮추면 0.088입니다.
+   - 폰은 M4보다 몇 배 느리니, 몇 시간씩 듣는 오디오북에서는 배터리 차이가 큽니다. sherpa-onnx Kotlin 기본값은 `numSteps = 5`입니다.
+3. **번들**: Supertonic 2와 3만 앱에 넣을 수 있습니다(OpenRAIL-M).
+   - 재배포할 때 LICENSE 사본을 함께 넣고 Attachment A 사용 제한을 사용자에게도 고지해야 합니다.
+   - 사용 제한 (g) '동의 없는 타인 사칭 금지'는 PRD 윤리 원칙과 같은 내용입니다.
+4. **Android 연결**: sherpa-onnx가 Kotlin API를 제공합니다(`OfflineTtsSupertonicModelConfig`, `GenerationConfig.extra["lang"]="ko"`, sid 0~4는 F1~F5, 5~9는 M1~M5). 커스텀 `TtsEngine`이 `OfflineTts.generate`를 감싸면 됩니다.
+5. **'내 목소리'는 모델 하나로 해결되지 않습니다.** 기본 모델을 Supertonic으로 정하면 내 목소리 경로는 아래 둘 중 하나여야 하며, 별도 결정이 필요합니다.
+   - Voice Builder(유료, 음성을 Supertone 서버에 올림. 결과 임베딩은 오프라인 사용 가능)
+   - 오픈 파인튜닝 트랙(Piper/VITS 계열을 PC에서 학습. 한국어 G2P가 숙제)
+   - 오픈 파인튜닝 경로가 이미 있는 MMS는 품질이 가장 낮고 NC 라이선스입니다.
+
+## 다음 단계
+
+- 사람이 직접 들어 보고 위 표를 채웁니다. 특히 Supertonic 2와 3의 음색 및 운율 비교.
+- 실기기(에뮬레이터 말고 arm64 폰)에서 Supertonic 2, 3의 RTF를 steps 4/5/8로 잽니다. Supertonic 3을 승격하려면 steps 5에서 RTF가 0.3 아래여야 할 것 같습니다.
+- 정규화기 출력이 이 테스트의 norm 열(1~15번)과 같은지 대조합니다. 정규화가 원문 대비 CER을 0.14~0.15에서 0.10으로 낮춥니다.
