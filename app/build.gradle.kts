@@ -15,6 +15,8 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1"
+        // sherpa-onnx ships ~30MB of native code per ABI; phones and the Apple-silicon emulator are arm64.
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     compileOptions {
@@ -38,6 +40,7 @@ kotlin {
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation(project(":korean"))
+    implementation("com.github.k2-fsa.sherpa-onnx:sherpa-onnx:v1.13.8")
 
     // 3.4.0 needs compileSdk 37 + AGP 9; 3.3.0 fits the installed SDK 36 / AGP 8.13.
     val readium = "3.3.0"

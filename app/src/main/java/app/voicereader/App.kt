@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.AtomicFile
 import android.util.Log
 import android.util.Size
@@ -17,9 +18,12 @@ import androidx.media3.session.MediaSession
 import app.voicereader.korean.KoreanNormalizer
 import app.voicereader.korean.PronunciationDictionary
 import java.io.File
+import com.k2fsa.sherpa.onnx.OfflineTts
 import java.io.FileNotFoundException
+import java.io.IOException
 import java.util.UUID
 import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
@@ -42,6 +46,7 @@ import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.coverFitting
 import org.readium.r2.shared.publication.services.isRestricted
+import org.readium.r2.shared.util.Language
 import org.readium.r2.shared.util.asset.AssetRetriever
 import org.readium.r2.shared.util.getOrElse
 import org.readium.r2.shared.util.http.DefaultHttpClient
@@ -232,7 +237,72 @@ class App : Application(), TtsNavigator.Listener {
     }
 
     /** What the engine actually reads: user fixes first, then Korean normalization. */
-    private fun speakable(text: String) = KoreanNormalizer.normalize(dictionary.apply(text))
+    private fun speakable(text: String, language: Language?): String {
+        val fixed = dictionary.apply(text)
+        val korean = language == null || language.code.startsWith("ko")
+        return if (korean) KoreanNormalizer.normalize(fixed) else fixed
+    }
+
+    // --- Voice packs (V-1, V-4): Supertonic files unzipped under voices/<name>; none = Android system TTS ---
+
+    private val voicesDir by lazy { File(filesDir, "voices").apply { mkdirs() } }
+    private var loadedModel: Pair<String, OfflineTts>? = null
+
+    fun voicePacks(): List<String> = voicesDir.listFiles().orEmpty().filter { isSupertonicPack(it) }.map { it.name }.sorted()
+
+    var activeVoice: String?
+        get() = prefs.getString("voice", null)?.takeIf { File(voicesDir, it).isDirectory }
+        set(value) {
+            stopTts() // the running engine may hold the model we are about to swap
+            prefs.edit().putString("voice", value).apply()
+        }
+
+    /** Loads (once) the Supertonic model of [name]; blocking, call off the main thread. */
+    @Synchronized
+    private fun model(name: String): OfflineTts {
+        loadedModel?.let { (loaded, model) -> if (loaded == name) return model else model.release() }
+        return loadSupertonic(File(voicesDir, name)).also { loadedModel = name to it }
+    }
+
+    /** Loads the model while the reader opens, so pressing play doesn't wait for it. */
+    fun warmUpVoice() {
+        val name = activeVoice ?: return
+        scope.launch(Dispatchers.IO) { runCatching { model(name) } }
+    }
+
+    /**
+     * Unzips a voice pack the user confirmed they have consent for, and makes it the active voice.
+     * Files are flattened, which also keeps "../" entries from escaping the pack folder. Returns an error, or null.
+     */
+    suspend fun importVoicePack(uri: Uri): String? {
+        val displayName = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { if (it.moveToFirst()) it.getString(0) else null }
+        val name = (displayName?.substringBeforeLast('.') ?: "voice").replace(Regex("""[^\w가-힣.-]"""), "_")
+        val dir = File(voicesDir, name)
+        val error = withContext(Dispatchers.IO) {
+            dir.deleteRecursively()
+            dir.mkdirs()
+            try {
+                val input = contentResolver.openInputStream(uri) ?: return@withContext "파일을 읽을 수 없습니다"
+                ZipInputStream(input).use { zip ->
+                    generateSequence { zip.nextEntry }.filterNot { it.isDirectory }.forEach { entry ->
+                        val file = File(entry.name).name
+                        if (!file.startsWith(".")) File(dir, file).outputStream().use { zip.copyTo(it) }
+                    }
+                }
+            } catch (e: IOException) {
+                return@withContext "압축을 풀 수 없습니다: ${e.message}"
+            }
+            if (!isSupertonicPack(dir)) return@withContext "Supertonic 음성 팩(zip)이 아닙니다"
+            File(dir, "voice-pack.json").writeAtomically(
+                JSONObject().put("source", displayName).put("consentConfirmed", true)
+                    .put("importedAt", System.currentTimeMillis()).toString(),
+            )
+            null
+        }
+        if (error != null) dir.deleteRecursively() else activeVoice = name
+        return error
+    }
 
     // --- Settings ---
 
@@ -263,7 +333,10 @@ class App : Application(), TtsNavigator.Listener {
     suspend fun startTts(start: Locator?) {
         val pub = publication ?: return
         // Swap point for the custom engine: replace AndroidTtsEngineProvider.
-        val engines = TransformingEngineProvider(AndroidTtsEngineProvider(this), ::speakable)
+        val android = AndroidTtsEngineProvider(this)
+        val voice = activeVoice
+        val base = if (voice == null) android else SupertonicEngineProvider(android) { model(voice) }
+        val engines = TransformingEngineProvider(base, ::speakable)
         val factory = TtsNavigatorFactory(this, pub, engines)
             ?: return toast("이 책은 낭독할 수 없습니다")
         val nav = factory.createNavigator(this, start, AndroidTtsPreferences(speed = speed))

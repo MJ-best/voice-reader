@@ -59,6 +59,7 @@ class ReaderActivity : AppCompatActivity() {
         setContentView(R.layout.reader)
         title = app.book?.title
         navigator = supportFragmentManager.findFragmentById(R.id.navigator) as EpubNavigatorFragment
+        app.warmUpVoice()
 
         val play = findViewById<ImageButton>(R.id.play)
         val speed = findViewById<Button>(R.id.speed)
