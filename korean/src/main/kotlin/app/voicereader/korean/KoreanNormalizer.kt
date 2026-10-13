@@ -72,9 +72,10 @@ object KoreanNormalizer {
         Regex("""(제\s?)?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:\s?(?:($units)(?![A-Za-z])|($counters)))?""")
     }
 
-    fun normalize(text: String): String = text
-        .replace(HANJA_THEN_HANGUL, "$1")
+    fun normalize(text: String, options: ReadingOptions = ReadingOptions()): String = text
+        .replace(HANJA_THEN_HANGUL, "$1") // before brackets are dropped, so the Hangul reading survives
         .replace(PARENTHESIZED_HANJA, "")
+        .let { applyReadingOptions(it, options) }
         .replace(PHONE) { m -> m.groupValues.drop(1).joinToString(" ") { digits(it, zero = "공") } }
         .replace(DATE) { m ->
             val (y, mo, d) = m.destructured
@@ -95,7 +96,7 @@ object KoreanNormalizer {
             }
         }
         .replace(NUMBER, ::readNumber)
-        .replace(ACRONYM) { m -> m.value.map { LETTERS.getValue(it) }.joinToString("") }
+        .let { if (options.spellAcronyms) it.replace(ACRONYM) { m -> m.value.map { c -> LETTERS.getValue(c) }.joinToString("") } else it }
 
     private fun readNumber(m: MatchResult): String {
         val (prefix, grouped, fraction, unit, counter) = m.destructured

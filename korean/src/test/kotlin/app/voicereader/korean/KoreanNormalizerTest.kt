@@ -72,6 +72,22 @@ class KoreanNormalizerTest {
         check("대한민국", "大韓民國(대한민국)")
     }
 
+    @Test fun readingOptions() {
+        val skipAsides = ReadingOptions(parentheses = false)
+        check("사과(빨간 과일)를 샀다", "사과(빨간 과일)를 샀다")
+        assertEquals("사과를 샀다", KoreanNormalizer.normalize("사과(빨간 과일)를 샀다", skipAsides))
+        assertEquals("말이다", KoreanNormalizer.normalize("말(설명(부연))이다", skipAsides))
+        assertEquals("본문 끝", KoreanNormalizer.normalize("본문[주석] 끝", skipAsides))
+        assertEquals("대한민국", KoreanNormalizer.normalize("大韓民國(대한민국)", skipAsides))
+
+        check("끝났다. 말이다", "끝났다.¹ 말이다[1]")
+        assertEquals("끝났다.¹", KoreanNormalizer.normalize("끝났다.¹", ReadingOptions(footnoteMarks = true)))
+
+        assertEquals("AI가", KoreanNormalizer.normalize("AI가", ReadingOptions(spellAcronyms = false)))
+        assertEquals("Book (draft)", applyReadingOptions("Book (draft)", ReadingOptions()))
+        assertEquals("Book", applyReadingOptions("Book (draft)", ReadingOptions(parentheses = false)))
+    }
+
     @Test fun dictionary() {
         val dict = PronunciationDictionary(mapOf("Readium" to "리디움", "AI" to "인공지능", "값" to "갑"))
         assertEquals("리디움을 써요", dict.apply("Readium을 써요"))
