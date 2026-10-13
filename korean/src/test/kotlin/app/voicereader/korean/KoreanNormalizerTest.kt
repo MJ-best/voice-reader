@@ -35,6 +35,22 @@ class KoreanNormalizerTest {
         check("오후 세 시 오분", "오후 3:05")
     }
 
+    @Test fun bibleVerses() {
+        check("요한복음 삼장 십육절", "요한복음 3:16")
+        check("요한복음 삼장 십육절", "요 3:16")
+        check("(로마서 팔장 이십팔절)", "(롬 8:28)")
+        check("고린도전서 십삼장 사절", "고전13:4")
+        check("시편 이십삼편 일절", "시 23:1")
+        check("마태복음 오장 삼절에서 십이절", "마 5:3-12")
+        check("창세기 일장 일절에서 이장 삼절", "창 1:1~2:3")
+        check("요한일서 사장 팔절", "요한1서 4:8")
+        check("예레미야애가 삼장 이십이절", "예레미야애가 3:22")
+        // Not verses: no book name right before the numbers.
+        check("점수는 삼:이였다", "점수는 3:2였다")
+        check("결과 삼:이", "결과 3:2")
+        check("오후 세 시 오분", "오후 3:05")
+    }
+
     @Test fun unitsAndDecimals() {
         check("오 킬로미터", "5km")
         check("삼 점 오 킬로그램", "3.5kg")

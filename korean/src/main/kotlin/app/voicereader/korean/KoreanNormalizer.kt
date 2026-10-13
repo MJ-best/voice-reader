@@ -44,6 +44,27 @@ object KoreanNormalizer {
     private val PHONE = Regex("""(?<!\d)(0\d{1,2})-(\d{3,4})-(\d{4})(?!\d)""")
     private val DATE = Regex("""(?<!\d)(\d{4})[./-](\d{1,2})[./-](\d{1,2})\.?(?!\d)""")
     private val TIME = Regex("""(오전|오후)\s?(\d{1,2}):(\d{2})(?!\d)""") // bare 3:16 is ambiguous (time, verse, score)
+
+    /** Bible book names (개역개정) and abbreviations → full name. A verse is only recognized after one of these. */
+    private val BIBLE_BOOKS: Map<String, String> = listOf(
+        "창세기|창", "출애굽기|출", "레위기|레", "민수기|민", "신명기|신", "여호수아|수", "사사기|삿", "룻기|룻",
+        "사무엘상|삼상", "사무엘하|삼하", "열왕기상|왕상", "열왕기하|왕하", "역대상|대상", "역대하|대하", "에스라|스",
+        "느헤미야|느", "에스더|에", "욥기|욥", "시편|시", "잠언|잠", "전도서|전", "아가|아가서|아", "이사야|사",
+        "예레미야|렘", "예레미야애가|애가|애", "에스겔|겔", "다니엘|단", "호세아|호", "요엘|욜", "아모스|암",
+        "오바댜|옵", "요나|욘", "미가|미", "나훔|나", "하박국|합", "스바냐|습", "학개|학", "스가랴|슥", "말라기|말",
+        "마태복음|마", "마가복음|막", "누가복음|눅", "요한복음|요", "사도행전|행", "로마서|롬", "고린도전서|고전",
+        "고린도후서|고후", "갈라디아서|갈", "에베소서|엡", "빌립보서|빌", "골로새서|골", "데살로니가전서|살전",
+        "데살로니가후서|살후", "디모데전서|딤전", "디모데후서|딤후", "디도서|딛", "빌레몬서|몬", "히브리서|히",
+        "야고보서|약", "베드로전서|벧전", "베드로후서|벧후", "요한일서|요한1서|요일", "요한이서|요한2서|요이",
+        "요한삼서|요한3서|요삼", "유다서|유", "요한계시록|계시록|계",
+    ).flatMap { line -> line.split("|").let { names -> names.map { it to names.first() } } }.toMap()
+
+    // 요 3:16, 요한복음3:16, 마 5:3-12, 창 1:1~2:3. The name must start a word, so "결과 3:2" stays a score.
+    private val BIBLE_VERSE = run {
+        val names = BIBLE_BOOKS.keys.sortedByDescending { it.length }.joinToString("|")
+        Regex("""(?<![가-힣])($names)\s?(\d{1,3}):(\d{1,3})(?:\s?[-~–]\s?(?:(\d{1,3}):)?(\d{1,3}))?""")
+    }
+
     private val ACRONYM = Regex("""(?<![A-Za-z])[A-Z]{2,4}(?![A-Za-z])""")
     private val NUMBER = run {
         val units = UNITS.keys.sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) }
@@ -62,6 +83,16 @@ object KoreanNormalizer {
         .replace(TIME) { m ->
             val (half, h, min) = m.destructured
             "$half ${h}시" + if (min == "00") "" else " ${min.toInt()}분"
+        }
+        .replace(BIBLE_VERSE) { m ->
+            val (name, chapter, verse, endChapter, endVerse) = m.destructured
+            val book = BIBLE_BOOKS.getValue(name)
+            val unit = if (book == "시편") "편" else "장"
+            "$book $chapter$unit ${verse}절" + when {
+                endVerse.isEmpty() -> ""
+                endChapter.isEmpty() -> "에서 ${endVerse}절"
+                else -> "에서 $endChapter$unit ${endVerse}절"
+            }
         }
         .replace(NUMBER, ::readNumber)
         .replace(ACRONYM) { m -> m.value.map { LETTERS.getValue(it) }.joinToString("") }
