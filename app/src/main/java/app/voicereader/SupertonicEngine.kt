@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import app.voicereader.korean.isDialogue
 import com.k2fsa.sherpa.onnx.GeneratedAudio
 import com.k2fsa.sherpa.onnx.GenerationConfig
 import com.k2fsa.sherpa.onnx.OfflineTts
@@ -22,6 +23,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread
+import kotlin.math.abs
 import kotlin.concurrent.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,6 +43,8 @@ import org.readium.r2.shared.util.Try
 private const val SPEAKER = 0 // 0..4 = F1..F5, 5..9 = M1..M5. ponytail: fixed until there is a voice picker.
 private const val STEPS = 8 // what the listening test used; drop to 4–5 if a phone can't keep up.
 private val LANGUAGES = setOf("ko", "en", "es", "pt", "fr") // Supertonic 2
+private const val SILENCE = 0.01f // ≈ -40 dBFS
+private const val MARGIN_MS = 50 // kept around speech so soft onsets aren't clipped
 
 private val ONNX_PARTS = listOf("duration_predictor", "text_encoder", "vector_estimator", "vocoder")
 private val OTHER_FILES = listOf("tts.json", "unicode_indexer.bin", "voice.bin")
@@ -61,7 +65,7 @@ fun supertonicLanguage(language: Language?): String =
  * coming up are ready before they are read (O-2). Results are keyed by the exact text spoken (after pronunciation
  * fixes and normalization), language and speed, so a dictionary edit or speed change never replays stale audio.
  */
-class Synthesizer(dir: File) {
+class Synthesizer(private val dir: File) {
 
     private data class Key(val text: String, val language: String, val speed: Float)
 
@@ -156,8 +160,22 @@ class Synthesizer(dir: File) {
             GenerationConfig(sid = SPEAKER, speed = key.speed, numSteps = STEPS, extra = mapOf("lang" to key.language)),
         )
         val seconds = audio.samples.size.toDouble() / audio.sampleRate
-        Log.i("Supertonic", "rtf=%.3f (%.1fs audio)".format((SystemClock.elapsedRealtime() - started) / 1000.0 / seconds, seconds))
-        return audio
+        Log.i("Supertonic", "${dir.name} rtf=%.3f (%.1fs audio)".format((SystemClock.elapsedRealtime() - started) / 1000.0 / seconds, seconds))
+        return trimmed(audio)
+    }
+
+    /**
+     * Supertonic pads every sentence with ~250ms of silence on both ends, which added up to a half-second gap between
+     * sentences. Keep a small margin around the speech; the player adds the listener's chosen pause.
+     */
+    private fun trimmed(audio: GeneratedAudio): GeneratedAudio {
+        val samples = audio.samples
+        val first = samples.indexOfFirst { abs(it) > SILENCE }
+        if (first < 0) return audio
+        val last = samples.indexOfLast { abs(it) > SILENCE }
+        val margin = audio.sampleRate * MARGIN_MS / 1000
+        val speech = samples.copyOfRange((first - margin).coerceAtLeast(0), (last + margin + 1).coerceAtMost(samples.size))
+        return GeneratedAudio(speech, audio.sampleRate)
     }
 
     /** Blocks until the sentence being synthesized (if any) is done, then frees the model. Call off the main thread. */
@@ -175,6 +193,13 @@ class Synthesizer(dir: File) {
     }
 }
 
+/** Who reads what: narration, and lines of dialogue (PRD N-6). The same synthesizer unless the book mixes voices. */
+class Speakers(val narration: Synthesizer, val dialogue: Synthesizer) {
+    val mixed: Boolean get() = narration !== dialogue
+
+    fun of(text: String): Synthesizer = if (mixed && isDialogue(text)) dialogue else narration
+}
+
 /**
  * Supertonic (sherpa-onnx) behind Readium's TTS navigator.
  * ponytail: reuses the AndroidTts* settings/preferences/error/voice types so the navigator type, the speed preference
@@ -182,18 +207,20 @@ class Synthesizer(dir: File) {
  */
 class SupertonicEngineProvider(
     android: AndroidTtsEngineProvider,
-    private val synthesizer: Synthesizer,
+    private val speakers: Speakers,
+    private val pauseMs: () -> Int,
 ) : TtsEngineProvider<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsPreferencesEditor, AndroidTtsEngine.Error, AndroidTtsEngine.Voice> by android {
 
     override suspend fun createEngine(
         publication: Publication,
         initialPreferences: AndroidTtsPreferences,
     ): Try<TtsEngine<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsEngine.Error, AndroidTtsEngine.Voice>, Error> =
-        Try.success(SupertonicEngine(synthesizer, publication.metadata.language, initialPreferences))
+        Try.success(SupertonicEngine(speakers, pauseMs, publication.metadata.language, initialPreferences))
 }
 
 private class SupertonicEngine(
-    private val synthesizer: Synthesizer,
+    private val speakers: Speakers,
+    private val pauseMs: () -> Int,
     private val bookLanguage: Language?,
     initialPreferences: AndroidTtsPreferences,
 ) : TtsEngine<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsEngine.Error, AndroidTtsEngine.Voice> {
@@ -227,7 +254,7 @@ private class SupertonicEngine(
 
     override fun speak(requestId: TtsEngine.RequestId, text: String, language: Language?) {
         current = requestId
-        val audio = synthesizer.take(
+        val audio = speakers.of(text).take(
             text,
             supertonicLanguage(language ?: settings.value.language),
             settings.value.speed.toFloat(),
@@ -286,10 +313,16 @@ private class SupertonicEngine(
                 if (current != id) return false
                 Thread.sleep(20)
             }
-            return true
         } finally {
             track.release()
         }
+        // The pause between sentences: waited here rather than baked into the audio, so changing it needs no resynthesis.
+        val pauseEnds = SystemClock.elapsedRealtime() + pauseMs()
+        while (SystemClock.elapsedRealtime() < pauseEnds) {
+            if (current != id) return false
+            Thread.sleep(10)
+        }
+        return true
     }
 
     override fun stop() {

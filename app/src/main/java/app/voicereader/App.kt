@@ -17,12 +17,16 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaSession
 import app.voicereader.korean.KoreanNormalizer
 import app.voicereader.korean.PronunciationDictionary
+import app.voicereader.korean.ReadingOptions
+import app.voicereader.korean.applyReadingOptions
+import app.voicereader.korean.splitDialogue
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.util.UUID
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
@@ -192,6 +196,23 @@ class App : Application(), TtsNavigator.Listener {
         saveBooks()
     }
 
+    /** How far into the book the saved position is, in percent; null if never opened. */
+    fun progress(book: Book): Int? = book.locator?.locations?.totalProgression?.let { (it * 100).roundToInt() }
+
+    /** Removes the book with its files, position and per-book settings. */
+    fun deleteBook(book: Book) {
+        if (this.book?.id == book.id) {
+            stopTts()
+            publication?.close()
+            publication = null
+            this.book = null
+        }
+        books.removeAll { it.id == book.id }
+        saveBooks()
+        listOf(epub(book), cover(book), bookWordsFile(book)).forEach { it.delete() }
+        prefs.edit().remove("dialogueVoice:${book.id}").apply()
+    }
+
     private fun loadBooks(): MutableList<Book> {
         val array = JSONArray(index.readAtomically() ?: return mutableListOf())
         return MutableList(array.length()) { i ->
@@ -235,26 +256,53 @@ class App : Application(), TtsNavigator.Listener {
         globalWordsFile.writeAtomically(JSONObject(globalWords as Map<*, *>).toString())
         book?.let { bookWordsFile(it).writeAtomically(JSONObject(bookWords as Map<*, *>).toString()) }
         rebuildDictionary()
+        rereadSentence()
+    }
+
+    /** Starts the current sentence over, so a pronunciation or reading change is heard right away. */
+    private fun rereadSentence() {
         tts.value?.let { it.go(it.location.value.utteranceLocator) }
     }
 
-    /** What the engine actually reads: user fixes first, then Korean normalization. */
+    /** Reading options for every book (parentheses, footnote marks, acronyms). */
+    var readingOptions: ReadingOptions
+        get() = ReadingOptions(
+            parentheses = prefs.getBoolean("readParentheses", true),
+            footnoteMarks = prefs.getBoolean("readFootnoteMarks", false),
+            spellAcronyms = prefs.getBoolean("spellAcronyms", true),
+        )
+        set(value) {
+            prefs.edit()
+                .putBoolean("readParentheses", value.parentheses)
+                .putBoolean("readFootnoteMarks", value.footnoteMarks)
+                .putBoolean("spellAcronyms", value.spellAcronyms)
+                .apply()
+            rereadSentence()
+        }
+
+    /** Silence after each sentence, for voice packs (the system voice paces itself). */
+    var sentencePauseMs: Int
+        get() = prefs.getInt("sentencePauseMs", 150)
+        set(value) = prefs.edit().putInt("sentencePauseMs", value).apply()
+
+    /** What the engine actually reads: user fixes first, then reading options and Korean normalization. */
     private fun speakable(text: String, language: Language?): String {
         val fixed = dictionary.apply(text)
         val korean = language == null || language.code.startsWith("ko")
-        return if (korean) KoreanNormalizer.normalize(fixed) else fixed
+        return if (korean) KoreanNormalizer.normalize(fixed, readingOptions) else applyReadingOptions(fixed, readingOptions)
     }
 
     // --- Voice packs (V-1, V-4): Supertonic files unzipped under voices/<name>; none = Android system TTS ---
 
     private val voicesDir by lazy { File(filesDir, "voices").apply { mkdirs() } }
-    private var loadedVoice: Pair<String, Synthesizer>? = null
+    private val loaded = mutableMapOf<String, Synthesizer>()
 
-    /** Set while Supertonic reads, so sentence splitting can queue the paragraph ahead of time (O-2). */
-    private var prefetcher: Synthesizer? = null
+    /** Set while Supertonic reads, so sentence splitting can queue each paragraph ahead of time (O-2). */
+    private var speakers: Speakers? = null
 
     fun voicePacks(): List<String> = voicesDir.listFiles().orEmpty().filter { isSupertonicPack(it) }.map { it.name }.sorted()
 
+    /** The narration voice, for every book. */
     var activeVoice: String?
         get() = prefs.getString("voice", null)?.takeIf { File(voicesDir, it).isDirectory }
         set(value) {
@@ -262,36 +310,57 @@ class App : Application(), TtsNavigator.Listener {
             prefs.edit().putString("voice", value).apply()
         }
 
-    /** Loads (once) the Supertonic model of [name]; blocking, call off the main thread. */
+    /** The voice for lines of dialogue in the open book (PRD N-6); null = same as narration. */
+    var dialogueVoice: String?
+        get() = book?.let { prefs.getString("dialogueVoice:${it.id}", null) }?.takeIf { File(voicesDir, it).isDirectory }
+        set(value) {
+            stopTts()
+            book?.let { prefs.edit().putString("dialogueVoice:${it.id}", value).apply() }
+        }
+
+    /** Loads the voices the open book needs and frees any other model. Null = Android system TTS. Blocking. */
     @Synchronized
-    private fun synthesizer(name: String): Synthesizer {
-        loadedVoice?.let { (loaded, synthesizer) -> if (loaded == name) return synthesizer else synthesizer.release() }
-        return Synthesizer(File(voicesDir, name)).also { loadedVoice = name to it }
+    private fun loadSpeakers(): Speakers? {
+        val narration = activeVoice ?: return null
+        val dialogue = dialogueVoice ?: narration
+        (loaded.keys - setOf(narration, dialogue)).forEach { loaded.remove(it)?.release() }
+        fun synthesizer(name: String) = loaded.getOrPut(name) { Synthesizer(File(voicesDir, name)) }
+        return Speakers(synthesizer(narration), synthesizer(dialogue))
     }
 
-    /** Loads the model while the reader opens, so pressing play doesn't wait for it. */
+    /** Loads the models while the reader opens, so pressing play doesn't wait for them. */
     fun warmUpVoice() {
-        val name = activeVoice ?: return
-        scope.launch(Dispatchers.IO) { runCatching { synthesizer(name) } }
+        if (activeVoice == null || tts.value != null) return
+        scope.launch(Dispatchers.IO) { runCatching { loadSpeakers() } }
     }
 
-    /** Readium's sentence splitter, plus: queue each freshly split paragraph for synthesis before it is read. */
+    /**
+     * Readium's sentence splitter, plus: lines of dialogue become pieces of their own when the book mixes voices, and
+     * each freshly split paragraph is queued for synthesis before it is read.
+     */
     private fun sentenceTokenizer(language: Language?): TextTokenizer {
         val sentences = DefaultTextContentTokenizer(TextUnit.Sentence, language)
         return object : TextTokenizer {
-            override fun tokenize(data: String): List<IntRange> = sentences.tokenize(data).also { ranges ->
-                val synthesizer = prefetcher ?: return@also
-                val lang = language ?: publication?.metadata?.language
-                val texts = ranges.map { data.substring(it) }
-                    .filter { text -> text.any { it.isLetterOrDigit() } } // Readium skips the rest too
-                    .map { speakable(it, lang) }
-                synthesizer.prefetch(texts, supertonicLanguage(lang), speed.toFloat())
+            override fun tokenize(data: String): List<IntRange> {
+                val speakers = speakers
+                val ranges = if (speakers?.mixed == true) splitDialogue(data, sentences::tokenize) else sentences.tokenize(data)
+                if (speakers != null) prefetch(speakers, data, ranges, language ?: publication?.metadata?.language)
+                return ranges
             }
         }
     }
 
+    private fun prefetch(speakers: Speakers, paragraph: String, ranges: List<IntRange>, language: Language?) {
+        val texts = ranges.map { paragraph.substring(it) }.filter { text -> text.any { it.isLetterOrDigit() } } // as Readium
+        val (dialogue, narration) = texts.partition { speakers.of(it) !== speakers.narration }
+        fun Synthesizer.queue(texts: List<String>) =
+            prefetch(texts.map { speakable(it, language) }, supertonicLanguage(language), speed.toFloat())
+        speakers.narration.queue(narration)
+        if (speakers.mixed) speakers.dialogue.queue(dialogue)
+    }
+
     /**
-     * Unzips a voice pack the user confirmed they have consent for, and makes it the active voice.
+     * Unzips a voice pack the user confirmed they have consent for; the first one becomes the narration voice.
      * Files are flattened, which also keeps "../" entries from escaping the pack folder. Returns an error, or null.
      */
     suspend fun importVoicePack(uri: Uri): String? {
@@ -320,7 +389,7 @@ class App : Application(), TtsNavigator.Listener {
             )
             null
         }
-        if (error != null) dir.deleteRecursively() else activeVoice = name
+        if (error != null) dir.deleteRecursively() else if (activeVoice == null) activeVoice = name // first pack narrates
         return error
     }
 
@@ -352,15 +421,14 @@ class App : Application(), TtsNavigator.Listener {
 
     suspend fun startTts(start: Locator?) {
         val pub = publication ?: return
-        val voice = activeVoice
-        val synthesizer = try {
-            voice?.let { withContext(Dispatchers.IO) { synthesizer(it) } } // usually already warm
+        val speakers = try {
+            withContext(Dispatchers.IO) { loadSpeakers() } // usually already warm
         } catch (e: Exception) {
             return toast("음성 팩을 불러올 수 없습니다: ${e.message}")
         }
         val android = AndroidTtsEngineProvider(this)
-        val base = if (synthesizer == null) android else SupertonicEngineProvider(android, synthesizer)
-        prefetcher = synthesizer
+        val base = if (speakers == null) android else SupertonicEngineProvider(android, speakers) { sentencePauseMs }
+        this.speakers = speakers
         val factory = TtsNavigatorFactory(
             this, pub, TransformingEngineProvider(base, ::speakable), tokenizerFactory = ::sentenceTokenizer,
         ) ?: return toast("이 책은 낭독할 수 없습니다")
@@ -403,7 +471,7 @@ class App : Application(), TtsNavigator.Listener {
     fun stopTts() {
         val nav = tts.value ?: return
         tts.value = null
-        prefetcher = null
+        speakers = null
         session?.release()
         session = null
         nav.close()
