@@ -10,13 +10,26 @@
 
 ## 화면
 
-| 서재와 이어 듣기 | 책장으로 묶기 | 전체 보기 |
-|:---:|:---:|:---:|
-| <img src="docs/screenshots/library.png" width="240" alt="서재: 이어 듣기 카드와 읽는 중 책장"> | <img src="docs/screenshots/shelves.png" width="240" alt="소설, 에세이·묵상 책장"> | <img src="docs/screenshots/all-books.png" width="240" alt="표지 그리드와 진행률"> |
-| **낭독 중** — 대사는 Supertonic 3, 지문은 Supertonic 2 | **단어를 길게 눌러** 발음 고치기 | **발음 추가** — 이 책만 / 모든 책 |
-| <img src="docs/screenshots/reading.png" width="240" alt="대사에 하이라이트가 잡힌 낭독 화면"> | <img src="docs/screenshots/fix-select.png" width="240" alt="텍스트 선택 메뉴의 발음 고치기"> | <img src="docs/screenshots/fix-dialog.png" width="240" alt="발음 추가 창"> |
-| **설정** — 네 갈래로 나눠 스크롤 없이 | **보기** — 테마·글꼴, 크기는 −/+ | **읽기 옵션** — 켬 \| 끔 |
-| <img src="docs/screenshots/settings.png" width="240" alt="설정 시트"> | <img src="docs/screenshots/display.png" width="240" alt="보기 설정 시트"> | <img src="docs/screenshots/reading-options.png" width="240" alt="읽기 옵션 시트"> |
+<p align="center">
+  <img src="docs/screenshots/library.png" width="31%" alt="서재: 이어 듣기 카드와 읽는 중 책장">
+  <img src="docs/screenshots/shelves.png" width="31%" alt="소설, 에세이·묵상 책장">
+  <img src="docs/screenshots/all-books.png" width="31%" alt="표지 그리드와 진행률">
+</p>
+<p align="center"><sub>서재와 이어 듣기 · 책장으로 묶기 · 전체 보기</sub></p>
+
+<p align="center">
+  <img src="docs/screenshots/reading.png" width="31%" alt="대사에 하이라이트가 잡힌 낭독 화면">
+  <img src="docs/screenshots/fix-select.png" width="31%" alt="텍스트 선택 메뉴의 발음 고치기">
+  <img src="docs/screenshots/fix-dialog.png" width="31%" alt="발음 추가 창">
+</p>
+<p align="center"><sub>낭독 중(대사는 Supertonic 3, 지문은 Supertonic 2) · 단어를 길게 눌러 발음 고치기 · 발음 추가(이 책만 / 모든 책)</sub></p>
+
+<p align="center">
+  <img src="docs/screenshots/settings.png" width="31%" alt="설정 시트">
+  <img src="docs/screenshots/display.png" width="31%" alt="보기 설정 시트">
+  <img src="docs/screenshots/reading-options.png" width="31%" alt="읽기 옵션 시트">
+</p>
+<p align="center"><sub>설정(네 갈래, 스크롤 없이) · 보기(테마·글꼴, 크기는 −/+) · 읽기 옵션(켬 | 끔)</sub></p>
 
 <sub>스크린샷의 책과 표지는 데모용으로 직접 만든 것입니다. 선택한 항목은 검게 채워지고, 누르는 순간 반전되어 흑백 e-ink 화면에서도 분명하게 보입니다.</sub>
 
