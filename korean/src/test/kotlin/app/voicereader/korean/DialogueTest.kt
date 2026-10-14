@@ -18,6 +18,34 @@ class DialogueTest {
 
     private fun split(text: String) = splitDialogue(text, ::sentences).map { text.substring(it) }
 
+    private fun join(text: String, apart: (IntRange, IntRange) -> Boolean = { _, _ -> false }) =
+        joinShortSentences(sentences(text), apart = apart).map { text.substring(it).trim() }
+
+    @Test fun shortSentencesAreReadTogether() {
+        val text = "테오도로스는 자기 거처로 돌아갔다. 그는 앉았다. 마음은 여전히 달아나려 했다. 그는 시편 한 구절을 반복했다. " +
+            "처음에는 입술만 움직였다. 마음은 멀리 가 있었다. 그는 다시 반복했다."
+        assertEquals(
+            listOf(
+                "테오도로스는 자기 거처로 돌아갔다. 그는 앉았다. 마음은 여전히 달아나려 했다.",
+                "그는 시편 한 구절을 반복했다. 처음에는 입술만 움직였다. 마음은 멀리 가 있었다.",
+                "그는 다시 반복했다.",
+            ),
+            join(text),
+        )
+    }
+
+    @Test fun longSentencesStayAlone() {
+        val long = "낮의 열기가 돌에서 빠져나가자 몇 사람이 무덤 사이의 좁은 길을 천천히 걸었다."
+        assertEquals(listOf(long, long), join("$long $long"))
+    }
+
+    @Test fun joiningStopsWhereVoicesDiffer() {
+        val text = "그는 문을 열었다. \"누구세요?\" \"나야.\""
+        val ranges = splitDialogue(text, ::sentences)
+        val pieces = joinShortSentences(ranges) { a, b -> isDialogue(text.substring(a)) != isDialogue(text.substring(b)) }
+        assertEquals(listOf("그는 문을 열었다.", "\"누구세요?\" \"나야.\""), pieces.map { text.substring(it) })
+    }
+
     @Test fun dialogueThenAttribution() {
         assertEquals(listOf("\"어디 가니?\"", "엄마가 물었다."), split("\"어디 가니?\" 엄마가 물었다."))
         assertEquals(listOf("“내일 만나자.”", "그녀가 조용히 말했다."), split("“내일 만나자.” 그녀가 조용히 말했다."))

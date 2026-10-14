@@ -31,6 +31,30 @@ fun splitDialogue(text: String, sentences: (String) -> List<IntRange>): List<Int
     return ranges
 }
 
+/**
+ * Joins runs of short sentences into pieces of at least [min] characters (at most [max], where Supertonic would cut
+ * a Korean text in two anyway). Synthesized one by one, each short sentence starts its intonation from scratch and its
+ * pitch is drawn anew, so a run of them sounds like voices taking turns. [apart] keeps two neighbors separate
+ * (dialogue and narration read in different voices).
+ */
+fun joinShortSentences(
+    ranges: List<IntRange>,
+    min: Int = 40,
+    max: Int = 120,
+    apart: (IntRange, IntRange) -> Boolean = { _, _ -> false },
+): List<IntRange> {
+    val joined = mutableListOf<IntRange>()
+    for (range in ranges) {
+        val last = joined.lastOrNull()
+        if (last != null && last.last - last.first + 1 < min && range.last - last.first + 1 <= max && !apart(last, range)) {
+            joined[joined.lastIndex] = last.first..range.last
+        } else {
+            joined += range
+        }
+    }
+    return joined
+}
+
 /** At the paragraph start, after a sentence end, or right after another quote ("안녕." "응."). */
 private fun startsSentence(text: String, i: Int): Boolean {
     var j = i - 1

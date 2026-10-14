@@ -25,6 +25,7 @@ import app.voicereader.korean.KoreanNormalizer
 import app.voicereader.korean.PronunciationDictionary
 import app.voicereader.korean.ReadingOptions
 import app.voicereader.korean.applyReadingOptions
+import app.voicereader.korean.joinShortSentences
 import app.voicereader.korean.splitDialogue
 import java.io.DataInputStream
 import java.io.File
@@ -648,8 +649,10 @@ class App : Application(), TtsNavigator.Listener {
         return object : TextTokenizer {
             override fun tokenize(data: String): List<IntRange> {
                 val speakers = speakers
-                val ranges = if (speakers?.mixed == true) splitDialogue(data, sentences::tokenize) else sentences.tokenize(data)
-                if (speakers != null) prefetch(speakers, data, ranges, language ?: publication?.metadata?.language)
+                val split = if (speakers?.mixed == true) splitDialogue(data, sentences::tokenize) else sentences.tokenize(data)
+                if (speakers == null) return split // the device's TTS has no trouble with short sentences
+                val ranges = joinShortSentences(split) { a, b -> speakers.of(data.substring(a)) != speakers.of(data.substring(b)) }
+                prefetch(speakers, data, ranges, language ?: publication?.metadata?.language)
                 return ranges
             }
         }
@@ -774,7 +777,23 @@ class App : Application(), TtsNavigator.Listener {
 
     // --- TTS ---
 
+    private var starting = false
+
+    /**
+     * Loading the model takes seconds on a slow e-ink device, and tts is set only after that: without this guard a
+     * second tap on play meanwhile started a second reader, both reading and fighting over the page.
+     */
     suspend fun startTts(start: Locator?) {
+        if (starting || tts.value != null) return
+        starting = true
+        try {
+            launchTts(start)
+        } finally {
+            starting = false
+        }
+    }
+
+    private suspend fun launchTts(start: Locator?) {
         val pub = publication ?: return
         previewJob?.cancel()
         val speakers = try {
