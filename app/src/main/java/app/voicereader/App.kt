@@ -30,6 +30,8 @@ import java.io.DataInputStream
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.UUID
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
@@ -128,6 +130,52 @@ class Shelf(val id: String, var name: String, val bookIds: MutableList<String>)
 private enum class Added { YES, DUPLICATE, DRM, UNREADABLE }
 
 fun Context.toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+
+/** A voice pack the app fetches by itself: sherpa-onnx's Supertonic files on Hugging Face, pinned to a revision. */
+class PackSource(val name: String, val repo: String, val revision: String, val bytes: Long, val note: String)
+
+val DOWNLOADABLE_PACKS = listOf(
+    PackSource(
+        "supertonic-2", "csukuangfj2/sherpa-onnx-supertonic-tts-int8-2026-03-06",
+        "5dec5897b86e2b293790eedb5e1f561a3295651f", 96_405_714, "서술에 추천",
+    ),
+    PackSource(
+        "supertonic-3", "csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11",
+        "cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4", 145_296_838, "대사·감정 표현에 추천, 더 느림",
+    ),
+)
+
+private val PACK_FILES = listOf(
+    "duration_predictor.int8.onnx", "text_encoder.int8.onnx", "vector_estimator.int8.onnx", "vocoder.int8.onnx",
+    "tts.json", "unicode_indexer.bin", "voice.bin", "LICENSE",
+)
+
+/** Fetches [url] into [to] through a .part file, so [to] exists only once it is complete. */
+private fun download(url: String, to: File, onBytes: (Int) -> Unit) {
+    val connection = URL(url).openConnection() as HttpURLConnection
+    connection.connectTimeout = 15_000
+    connection.readTimeout = 30_000
+    try {
+        if (connection.responseCode != HttpURLConnection.HTTP_OK) throw IOException("HTTP ${connection.responseCode}")
+        val part = File(to.path + ".part")
+        connection.inputStream.use { input ->
+            part.outputStream().use { output ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    output.write(buffer, 0, n)
+                    onBytes(n)
+                }
+            }
+        }
+        val expected = connection.contentLengthLong
+        if (expected >= 0 && part.length() != expected) throw IOException("cut off at ${part.length()} of $expected")
+        if (!part.renameTo(to)) throw IOException("can't save ${to.name}")
+    } finally {
+        connection.disconnect()
+    }
+}
 
 private fun File.readAtomically(): String? =
     try { String(AtomicFile(this).readFully()) } catch (e: FileNotFoundException) { null }
@@ -654,6 +702,50 @@ class App : Application(), TtsNavigator.Listener {
         }
         if (error != null) dir.deleteRecursively() else if (activeVoice == null) setNarrationVoice(name, 0) // first pack narrates
         return error
+    }
+
+    /** The pack being downloaded and how far along (percent, in steps of 10 so e-ink redraws stay rare), or null. */
+    val packDownload = MutableStateFlow<Pair<String, Int>?>(null)
+
+    // ponytail: in-process download; it dies with the process. Tapping again picks up after the finished files.
+    // DownloadManager if downloading in the background ever matters.
+    fun downloadVoicePack(source: PackSource) {
+        if (packDownload.value != null) return toast("이미 음성 팩을 받는 중이에요")
+        packDownload.value = source.name to 0
+        val lock = (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "voicereader:download")
+            .apply { acquire(30 * 60_000L) }
+        scope.launch {
+            val error = withContext(Dispatchers.IO) {
+                val tmp = File(cacheDir, "pack-${source.name}").apply { mkdirs() } // finished files survive a failed try
+                var done = 0L
+                try {
+                    for (file in PACK_FILES) {
+                        val to = File(tmp, file)
+                        if (to.exists()) done += to.length()
+                        else download("https://huggingface.co/${source.repo}/resolve/${source.revision}/$file", to) { n ->
+                            done += n
+                            packDownload.value = source.name to (done * 10 / source.bytes).toInt().coerceAtMost(9) * 10
+                        }
+                    }
+                    if (!isSupertonicPack(tmp)) return@withContext "받은 음성 팩이 온전하지 않아요"
+                    File(tmp, "voice-pack.json").writeAtomically(
+                        JSONObject().put("source", "https://huggingface.co/${source.repo}/tree/${source.revision}")
+                            .put("importedAt", System.currentTimeMillis()).toString(),
+                    )
+                    val dir = File(voicesDir, source.name)
+                    dir.deleteRecursively()
+                    if (!tmp.renameTo(dir)) "음성 팩을 저장할 수 없어요" else null
+                } catch (e: IOException) {
+                    Log.w("VoicePack", "download ${source.name}", e)
+                    "음성 팩을 받지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요. 받은 부분부터 이어서 받아요."
+                }
+            }
+            lock.release()
+            packDownload.value = null
+            if (error == null && activeVoice == null) setNarrationVoice(source.name, 0) // first pack narrates
+            toast(error ?: "${voiceLabel(source.name)} 음성 팩을 설치했어요. 음성 버튼에서 목소리를 고를 수 있어요.")
+        }
     }
 
     // --- Settings ---

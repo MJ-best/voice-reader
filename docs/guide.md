@@ -1,6 +1,7 @@
 # 사용 방법
 
 자주 하는 일을 시나리오별로 정리했습니다. 화면은 에뮬레이터에서 데모용 책으로 찍었습니다.
+설치는 [README의 설치](../README.md#설치)를 보세요.
 
 1. [처음 켜고 책 모으기](#1-처음-켜고-책-모으기)
 2. [목소리 고르기](#2-목소리-고르기)
@@ -33,10 +34,18 @@
 ## 2. 목소리 고르기
 
 1. 서재 위쪽의 음성 버튼(지금 목소리 이름이 적힌 버튼)을 누릅니다.
-2. 음성 팩이 없으면 **음성 팩 가져오기 (zip)** 로 설치합니다. 목소리 사용 동의를 확인한 뒤 zip을 고릅니다. zip 만드는 법은 [README](../README.md#음성-팩-만들기)에 있습니다.
+2. 음성 팩이 없으면 **Supertonic 2 받기** → **받기**(약 96MB, Wi-Fi 권장). 받는 동안 서재 위쪽에 진행률이 보이고, 다 받으면 그 목소리로 바로 읽습니다.
+   대사용으로 **Supertonic 3 받기**(약 145MB)도 있습니다. 직접 묶은 zip은 **음성 팩 가져오기 (zip)** 로 넣습니다([README](../README.md#zip으로-가져오기)).
 3. 음성 팩 행을 누르면 목소리 10종(여성 1~5, 남성 1~5)이 나옵니다. 누르는 즉시 그 목소리로 바뀌고 한 문장을 들려 줍니다.
 
 여기서 고른 목소리는 모든 책의 서술에 씁니다. **기기 기본 음성**은 안드로이드에 설치된 TTS를 그대로 씁니다.
+
+<p align="center">
+  <img src="screenshots/voice-download.png" width="31%" alt="낭독 음성 시트의 Supertonic 3 받기">
+  <img src="screenshots/download-confirm.png" width="31%" alt="받기 확인 창">
+  <img src="screenshots/download-progress.png" width="31%" alt="서재 위쪽의 받는 중 진행률">
+</p>
+<p align="center"><sub>음성 팩 받기 · 받기 확인 · 받는 중 진행률</sub></p>
 
 <p align="center">
   <img src="screenshots/voices.png" width="31%" alt="낭독 음성 시트">

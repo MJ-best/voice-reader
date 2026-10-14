@@ -29,6 +29,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -100,10 +101,14 @@ class LibraryActivity : AppCompatActivity() {
         if (savedInstanceState == null) app.startDeviceScan(announce = false)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                app.scanProgress.collect { found ->
-                    // Text only, no spinner: a spinner is a refresh per frame on e-ink. The list redraws once at the end.
-                    if (found == null) refresh() else adapter.notifyItemChanged(0)
+                launch {
+                    app.scanProgress.collect { found ->
+                        // Text only, no spinner: a spinner is a refresh per frame on e-ink. The list redraws once at the end.
+                        if (found == null) refresh() else adapter.notifyItemChanged(0)
+                    }
                 }
+                // A finished download may have set the first narrating voice, which the header's voice button shows.
+                app.packDownload.drop(1).collect { if (it == null) refresh() else adapter.notifyItemChanged(0) }
             }
         }
 
@@ -322,7 +327,8 @@ class LibraryActivity : AppCompatActivity() {
                 app.activeVoice = null
                 refresh()
             }
-            app.voicePacks().forEach { pack ->
+            val packs = app.voicePacks()
+            packs.forEach { pack ->
                 val current = pack == app.activeVoice
                 row(
                     voiceLabel(pack),
@@ -331,11 +337,31 @@ class LibraryActivity : AppCompatActivity() {
                     checked = current,
                 ) { pickNarrationVoice(pack) }
             }
+            DOWNLOADABLE_PACKS.filter { it.name !in packs }.forEach { source ->
+                val downloading = app.packDownload.value?.first == source.name
+                row(
+                    "${voiceLabel(source.name)} 받기",
+                    if (downloading) "받는 중…" else "약 ${source.bytes / 1_000_000}MB · ${source.note}",
+                    icon = R.drawable.ic_add,
+                ) { if (!downloading) confirmDownload(source) }
+            }
             button("음성 팩 가져오기 (zip)") { confirmConsent { pickVoicePack.launch(arrayOf("application/zip", "application/octet-stream")) } }
             button("목소리 파일 가져오기 (JSON)") {
                 confirmConsent { pickVoiceStyle.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
             }
         }.show()
+    }
+
+    private fun confirmDownload(source: PackSource) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle("${voiceLabel(source.name)} 받기")
+            .setMessage(
+                "인터넷(Hugging Face)에서 음성 팩 약 ${source.bytes / 1_000_000}MB를 받아요. Wi-Fi에서 받기를 권해요.\n\n" +
+                    "받는 동안 서재 위쪽에 진행률이 보여요.",
+            )
+            .setPositiveButton("받기") { _, _ -> app.downloadVoicePack(source) }
+            .setNegativeButton("취소", null)
+            .show()
     }
 
     /** The voices of [pack]; each tap selects it and says a sentence in it. */
@@ -445,6 +471,7 @@ class LibraryActivity : AppCompatActivity() {
 
         private fun bindHeader(view: View) {
             view.findViewById<TextView>(R.id.count).text = app.scanProgress.value?.let { "찾는 중… 새 책 ${it}권" }
+                ?: app.packDownload.value?.let { (pack, percent) -> "${voiceLabel(pack)} 받는 중 $percent%" }
                 ?: if (books.isEmpty()) "" else "${books.size}권"
             view.findViewById<View>(R.id.actions).isVisible = books.isNotEmpty() // the empty state has its own buttons
             view.findViewById<MaterialButton>(R.id.voice).apply {

@@ -10,6 +10,14 @@
 
 **[사용 방법](docs/guide.md)**: 책 모으기, 목소리 고르기, 화면 끄고 듣기, 대사만 다른 목소리로, 발음 고치기, 책장 정리, 직접 만든 목소리 넣기를 화면과 함께 단계별로 안내합니다.
 
+## 설치
+
+1. 기기 브라우저에서 [voice-reader.apk](https://github.com/MJ-best/voice-reader/releases/latest/download/voice-reader.apk)를 받습니다([모든 릴리스](https://github.com/MJ-best/voice-reader/releases)).
+2. 받은 파일을 열어 설치합니다. 처음 한 번은 '출처를 알 수 없는 앱 설치'를 허용해야 합니다.
+3. 앱에서 음성 버튼 → **Supertonic 2 받기**로 음성 팩을 받습니다(약 96MB, Wi-Fi 권장).
+
+Android 8.0 이상, arm64 기기에서 동작합니다.
+
 ## 화면
 
 <p align="center">
@@ -50,7 +58,7 @@
 - 화면 가운데 탭으로 메뉴 표시/숨김, 가장자리 탭과 기기 페이지 버튼으로 넘김.
 
 **낭독**
-- 기기 기본 TTS, 또는 가져온 음성 팩([Supertonic](https://huggingface.co/Supertone) · [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), 기기 안에서 합성).
+- 기기 기본 TTS, 또는 Supertonic 음성 팩([Supertonic](https://huggingface.co/Supertone) · [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), 기기 안에서 합성). 음성 팩은 앱에서 바로 받거나 zip으로 가져옵니다.
 - 읽는 문장 하이라이트와 페이지 자동 넘김, 백그라운드 재생, 잠금화면·이어폰 버튼, 장 이동.
 - 다음 문장을 미리 합성해 끊김 없이 이어 읽습니다.
 - 대화문 목소리: 따옴표로 시작하는 대사만 다른 음성 팩으로 읽습니다(예: 서술은 Supertonic 2, 대사는 Supertonic 3).
@@ -68,9 +76,30 @@
 - 누르면 즉시 반전(검은 바탕·흰 글씨), 토글은 "켬 | 끔" 칸 나눔 버튼, 슬라이더 대신 −/+ 버튼.
 - 큰 글씨(본문 18sp)와 넓은 터치 영역(56~72dp).
 
-## 음성 팩 만들기
+## 음성 팩
 
-음성 팩은 앱에 들어 있지 않습니다. sherpa-onnx가 배포하는 Supertonic 모델을 zip으로 묶어 가져옵니다.
+음성 팩은 APK에 들어 있지 않습니다. 앱에서 바로 받거나, 직접 묶은 zip을 가져옵니다.
+
+### 앱에서 받기
+
+음성 버튼(지금 쓰는 음성 이름이 적힌 버튼) → **Supertonic 2 받기** 또는 **Supertonic 3 받기**.
+sherpa-onnx가 변환해 [Hugging Face](https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-tts-int8-2026-03-06)에 올린 파일을, 앱에 고정해 둔 버전 그대로 받습니다.
+받는 동안 서재 위쪽에 진행률이 보이고, 중간에 끊기면 다시 누를 때 다 받은 파일은 건너뛰고 이어 받습니다.
+
+| 음성 팩 | 크기 | 어울리는 곳 |
+|---|---|---|
+| Supertonic 2 | 약 96MB | 서술(일반 글). 빠르고 톤이 자연스럽습니다 |
+| Supertonic 3 | 약 145MB | 대사·감정 표현. 합성이 서너 배 느립니다 |
+
+<p align="center">
+  <img src="docs/screenshots/voice-download.png" width="31%" alt="낭독 음성 시트의 Supertonic 3 받기">
+  <img src="docs/screenshots/download-confirm.png" width="31%" alt="받기 확인 창: 약 145MB, Wi-Fi 권장">
+  <img src="docs/screenshots/download-progress.png" width="31%" alt="서재 위쪽의 받는 중 진행률">
+</p>
+
+### zip으로 가져오기
+
+sherpa-onnx가 배포하는 Supertonic 모델을 직접 zip으로 묶어 가져올 수도 있습니다.
 
 ```bash
 curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-tts-int8-2026-03-06.tar.bz2
@@ -79,7 +108,9 @@ cd sherpa-onnx-supertonic-tts-int8-2026-03-06 && zip ../supertonic-2.zip *.onnx 
 ```
 
 Supertonic 3은 `sherpa-onnx-supertonic-3-tts-int8-2026-05-11`을 같은 방법으로 묶습니다.
-만든 zip을 기기에 옮긴 뒤, 서재 위쪽의 음성 버튼(지금 쓰는 음성 이름이 적힌 버튼) → **음성 팩 가져오기**로 설치합니다. zip 파일 이름이 음성 이름이 됩니다.
+만든 zip을 기기에 옮긴 뒤, 음성 버튼 → **음성 팩 가져오기 (zip)** 로 설치합니다. zip 파일 이름이 음성 이름이 됩니다.
+
+### 목소리 고르기
 
 <img src="docs/screenshots/voices.png" width="240" alt="낭독 음성 고르기와 음성 팩 가져오기">
 
@@ -116,8 +147,10 @@ Supertonic Voice Builder 등에서 만든 목소리 파일(`style_ttl`·`style_d
 |---|---|
 | 모든 파일에 접근 (Android 11+) / 저장소 읽기 (Android 8~10) | 기기 안의 EPUB 찾기. 읽기만 하고, 고치거나 지우거나 기기 밖으로 보내지 않습니다 |
 | 포그라운드 서비스(미디어 재생) | 화면을 끈 채 낭독 |
+| 절전 해제(wake lock) | 화면을 끈 채 낭독하거나 음성 팩을 받는 동안 CPU가 잠들지 않게 |
+| 인터넷 | 음성 팩 받기. 그 밖에는 쓰지 않습니다 |
 
-네트워크를 쓰지 않습니다. 책, 읽기 기록, 발음 사전, 음성 팩은 모두 기기 안에만 있습니다. 분석·추적 SDK가 없습니다.
+네트워크는 음성 팩을 받을 때만 씁니다(Hugging Face). 책, 읽기 기록, 발음 사전은 기기 밖으로 보내지 않습니다. 분석·추적 SDK가 없습니다.
 "모든 파일에 접근" 권한 때문에 Play 스토어 배포에는 맞지 않으며, 직접 설치(사이드로드)를 전제로 합니다.
 
 ## 원칙
@@ -136,4 +169,4 @@ Supertonic Voice Builder 등에서 만든 목소리 파일(`style_ttl`·`style_d
 | [Readium Kotlin Toolkit](https://github.com/readium/kotlin-toolkit) | BSD-3-Clause | 의존성 |
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | Apache-2.0 | 의존성 |
 | AndroidX, Media3, Material Components | Apache-2.0 | 의존성 |
-| Supertonic 모델 가중치 | BigScience OpenRAIL-M | **포함하지 않음.** 음성 팩을 만들어 쓰는 사람이 사용 제한 조항(동의 없는 사칭 금지 등)을 지켜야 합니다 |
+| Supertonic 모델 가중치 | BigScience OpenRAIL-M | **APK에 포함하지 않음.** 앱이 Hugging Face에서 받거나 직접 묶어 가져옵니다. 쓰는 사람이 사용 제한 조항(동의 없는 사칭 금지 등)을 지켜야 합니다 |

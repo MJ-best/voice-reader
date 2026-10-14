@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1"
+        versionName = "0.1.0"
         // sherpa-onnx ships ~30MB of native code per ABI; phones and the Apple-silicon emulator are arm64.
         ndk { abiFilters += "arm64-v8a" }
     }
