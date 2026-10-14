@@ -25,6 +25,7 @@ import app.voicereader.korean.KoreanNormalizer
 import app.voicereader.korean.PronunciationDictionary
 import app.voicereader.korean.ReadingOptions
 import app.voicereader.korean.applyReadingOptions
+import app.voicereader.korean.isLatinOnly
 import app.voicereader.korean.joinShortSentences
 import app.voicereader.korean.splitDialogue
 import java.io.DataInputStream
@@ -497,6 +498,10 @@ class App : Application(), TtsNavigator.Listener {
         set(value) = prefs.edit().putInt("sentencePauseMs", value).apply()
 
     /** What the engine actually reads: user fixes first, then reading options and Korean normalization. */
+    /** The language a sentence is read in: the book's, except an English-only sentence in a Korean (or unlabeled) book. */
+    private fun spokenLanguage(text: String, language: Language?): Language? =
+        if ((language == null || language.code.startsWith("ko")) && isLatinOnly(text)) Language("en") else language
+
     private fun speakable(text: String, language: Language?): String {
         val fixed = dictionary.apply(text)
         val korean = language == null || language.code.startsWith("ko")
@@ -651,7 +656,10 @@ class App : Application(), TtsNavigator.Listener {
                 val speakers = speakers
                 val split = if (speakers?.mixed == true) splitDialogue(data, sentences::tokenize) else sentences.tokenize(data)
                 if (speakers == null) return split // the device's TTS has no trouble with short sentences
-                val ranges = joinShortSentences(split) { a, b -> speakers.of(data.substring(a)) != speakers.of(data.substring(b)) }
+                val ranges = joinShortSentences(split) { a, b ->
+                    val (x, y) = data.substring(a) to data.substring(b)
+                    speakers.of(x) != speakers.of(y) || isLatinOnly(x) != isLatinOnly(y) // one voice, one language per piece
+                }
                 prefetch(speakers, data, ranges, language ?: publication?.metadata?.language)
                 return ranges
             }
@@ -663,15 +671,17 @@ class App : Application(), TtsNavigator.Listener {
         // One queue per model, in reading order: narration and dialogue may be two voices of the same pack.
         texts.groupBy { speakers.of(it).synthesizer }.forEach { (synthesizer, texts) ->
             synthesizer.prefetch(
-                texts.map { speakable(it, language) to speakers.of(it).sid },
-                supertonicLanguage(language),
+                texts.map { text ->
+                    val spoken = spokenLanguage(text, language)
+                    Spoken(speakable(text, spoken), supertonicLanguage(spoken), speakers.of(text).sid)
+                },
                 speed.toFloat(),
             )
         }
         // A model with nothing in this paragraph still drops its stale look-ahead.
         setOf(speakers.narration.synthesizer, speakers.dialogue.synthesizer)
             .filter { s -> texts.none { speakers.of(it).synthesizer === s } }
-            .forEach { it.prefetch(emptyList(), supertonicLanguage(language), speed.toFloat()) }
+            .forEach { it.prefetch(emptyList(), speed.toFloat()) }
     }
 
     /**
@@ -805,7 +815,7 @@ class App : Application(), TtsNavigator.Listener {
         val base = if (speakers == null) android else SupertonicEngineProvider(android, speakers) { sentencePauseMs }
         this.speakers = speakers
         val factory = TtsNavigatorFactory(
-            this, pub, TransformingEngineProvider(base, ::speakable), tokenizerFactory = ::sentenceTokenizer,
+            this, pub, TransformingEngineProvider(base, ::speakable, ::spokenLanguage), tokenizerFactory = ::sentenceTokenizer,
         ) ?: return toast("이 책은 낭독할 수 없습니다")
         val nav = factory.createNavigator(this, start, AndroidTtsPreferences(speed = speed))
             .getOrElse { return toast("낭독 엔진을 시작할 수 없습니다: ${it.message}") }

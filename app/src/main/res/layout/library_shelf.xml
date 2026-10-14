@@ -83,7 +83,7 @@
             android:layout_height="match_parent"
             android:gravity="center"
             android:paddingHorizontal="24dp"
-            android:text="비어 있는 책장이에요. ⋯ 메뉴에서 책을 넣어 보세요."
+            android:text="비어 있는 책장이에요. ⋮ 메뉴에서 책을 넣어 보세요."
             android:visibility="gone" />
     </FrameLayout>
 

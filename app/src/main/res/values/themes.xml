@@ -50,7 +50,7 @@
 
     <style name="ThemeOverlay.VoiceReader.Dialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
         <item name="android:windowAnimationStyle">@null</item>
-        <item name="buttonBarPositiveButtonStyle">@style/Widget.VoiceReader.Button.Dialog</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.VoiceReader.Button.Dialog.Filled</item>
         <item name="buttonBarNegativeButtonStyle">@style/Widget.VoiceReader.Button.Dialog</item>
         <item name="buttonBarNeutralButtonStyle">@style/Widget.VoiceReader.Button.Dialog</item>
     </style>
@@ -81,6 +81,13 @@
     <style name="Widget.VoiceReader.Button.Dialog">
         <item name="android:minHeight">52dp</item>
         <item name="android:layout_marginStart">8dp</item>
+    </style>
+
+    <!-- The main action of a dialog (받기, 삭제, 저장…) is filled, so it stands apart from 취소 at a glance. -->
+    <style name="Widget.VoiceReader.Button.Dialog.Filled">
+        <item name="backgroundTint">@color/btn_filled_bg</item>
+        <item name="android:textColor">@color/btn_filled_fg</item>
+        <item name="iconTint">@color/btn_filled_fg</item>
     </style>
 
     <!-- Icon only: no fill until pressed, then a black block with a white icon. -->

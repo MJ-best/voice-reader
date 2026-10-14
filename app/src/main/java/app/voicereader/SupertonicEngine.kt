@@ -105,9 +105,9 @@ class Synthesizer(private val dir: File) {
      * except sentences the player already asked for: Readium can load the next paragraph before reading the last
      * sentence of the current one.
      */
-    fun prefetch(texts: List<Pair<String, Int>>, language: String, speed: Float) = lock.withLock {
+    fun prefetch(texts: List<Spoken>, speed: Float) = lock.withLock {
         wanted.retainAll { it in claimed }
-        texts.map { (text, sid) -> Key(text, language, speed, sid) }
+        texts.map { Key(it.text, it.language, speed, it.sid) }
             .filter { results[it]?.isDone != true && it != generating && it !in wanted }
             .forEach { wanted.addLast(it) }
         changed.signal()
@@ -159,7 +159,7 @@ class Synthesizer(private val dir: File) {
             GenerationConfig(sid = key.sid, speed = key.speed, numSteps = STEPS, extra = mapOf("lang" to key.language)),
         )
         val seconds = audio.samples.size.toDouble() / audio.sampleRate
-        Log.i("Supertonic", "${dir.name} sid=${key.sid} rtf=%.3f (%.1fs audio)".format((SystemClock.elapsedRealtime() - started) / 1000.0 / seconds, seconds))
+        Log.i("Supertonic", "${dir.name} sid=${key.sid} ${key.language} rtf=%.3f (%.1fs audio)".format((SystemClock.elapsedRealtime() - started) / 1000.0 / seconds, seconds))
         return trimmed(audio)
     }
 
@@ -191,6 +191,9 @@ class Synthesizer(private val dir: File) {
         fun onnx(dir: File, part: String) = dir.listFiles()!!.first { it.name.startsWith(part) && it.name.endsWith(".onnx") }.path
     }
 }
+
+/** A sentence to synthesize ahead: the text as spoken, its Supertonic language and voice. */
+data class Spoken(val text: String, val language: String, val sid: Int)
 
 /** One voice of a loaded pack: its synthesizer and speaker id (built-in F1..F5, M1..M5, then imported ones). */
 data class Voice(val synthesizer: Synthesizer, val sid: Int)

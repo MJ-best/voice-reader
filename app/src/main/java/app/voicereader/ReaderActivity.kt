@@ -14,7 +14,6 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -34,9 +33,6 @@ import org.readium.r2.navigator.Decoration
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.epub.EpubPreferences
-import org.readium.r2.navigator.input.InputListener
-import org.readium.r2.navigator.input.KeyEvent
-import org.readium.r2.navigator.input.TapEvent
 import org.readium.r2.navigator.preferences.FontFamily
 import org.readium.r2.navigator.preferences.Theme
 import org.readium.r2.navigator.util.DirectionalNavigationAdapter
@@ -62,7 +58,6 @@ class ReaderActivity : AppCompatActivity() {
     private val app get() = application as App
     private lateinit var navigator: EpubNavigatorFragment
     private lateinit var topBar: View
-    private var chromeVisible = true
 
     /** Adds "발음 고치기" to the text selection menu, next to Copy: long-press a word, fix how it is read. */
     private val selectionActions = object : ActionMode.Callback {
@@ -118,17 +113,8 @@ class ReaderActivity : AppCompatActivity() {
         findViewById<View>(R.id.prev).setOnClickListener { app.tts.value?.skipToPreviousUtterance() }
         findViewById<View>(R.id.next).setOnClickListener { app.tts.value?.skipToNextUtterance() }
 
-        // Taps near the edges and the device's page keys turn pages without animation, and put the top bar away
-        // (that's reading); a tap in the middle shows or hides it.
-        val pages = DirectionalNavigationAdapter(navigator, animatedTransition = false)
-        navigator.addInputListener(object : InputListener {
-            override fun onTap(event: TapEvent): Boolean {
-                setChrome(if (pages.onTap(event)) false else !chromeVisible)
-                return true
-            }
-
-            override fun onKey(event: KeyEvent): Boolean = pages.onKey(event).also { if (it) setChrome(false) }
-        })
+        // Taps near the edges and the device's page keys turn pages, without animation. The bars never move.
+        navigator.addInputListener(DirectionalNavigationAdapter(navigator, animatedTransition = false))
 
         if (savedInstanceState == null && intent.getBooleanExtra(AUTOPLAY, false) && app.tts.value == null) {
             lifecycleScope.launch { app.startTts(app.book?.locator) }
@@ -142,8 +128,7 @@ class ReaderActivity : AppCompatActivity() {
                         .distinctUntilChanged()
                         .collect { playing ->
                             play.setIconResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play)
-                            play.contentDescription = if (playing) "일시정지" else "재생"
-                            if (playing) setChrome(false) // listening starts: the page is all that matters
+                            play.text = if (playing) "일시정지" else "듣기"
                         }
                 }
                 launch {
@@ -185,28 +170,24 @@ class ReaderActivity : AppCompatActivity() {
         if (::navigator.isInitialized && app.tts.value == null) app.saveLocator(navigator.currentLocator.value)
     }
 
-    /** The top bar takes the page's colors, so it reads as part of the page; a rule separates it from the text. */
+    /** The bars take the page's colors, so they read as part of the page; rules separate them from the text. */
     private fun applyPageTheme(theme: Theme) {
         val page = theme.backgroundColor
         val ink = theme.contentColor
         val pressed = arrayOf(intArrayOf(android.R.attr.state_pressed), intArrayOf())
         findViewById<View>(R.id.root).setBackgroundColor(page)
         topBar.setBackgroundColor(page)
+        findViewById<View>(R.id.player).setBackgroundColor(page)
         findViewById<View>(R.id.topBarRule).setBackgroundColor(ink)
+        findViewById<View>(R.id.playerRule).setBackgroundColor(ink)
         findViewById<TextView>(R.id.bookTitle).setTextColor(ink)
+        findViewById<TextView>(R.id.chapter).setTextColor(ink)
         findViewById<MaterialButton>(R.id.back).apply {
             iconTint = ColorStateList(pressed, intArrayOf(page, ink))
             backgroundTintList = ColorStateList(pressed, intArrayOf(ink, Color.TRANSPARENT))
         }
         WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars =
             ColorUtils.calculateLuminance(page) > 0.5
-    }
-
-    /** Shows or hides the top bar at once: a fade would be a dozen e-ink refreshes. */
-    private fun setChrome(visible: Boolean) {
-        if (chromeVisible == visible) return
-        chromeVisible = visible
-        topBar.isVisible = visible
     }
 
     private fun togglePlay() {
@@ -265,18 +246,21 @@ class ReaderActivity : AppCompatActivity() {
                 "보기",
                 "${if (prefs.fontFamily == FontFamily.SANS_SERIF) "고딕" else "명조"} · ${percent(prefs.fontSize ?: 1.0)} · 줄 간격 ${"%.1f".format(prefs.lineHeight ?: 1.6)}",
                 icon = R.drawable.ic_text,
+                more = true,
             ) { showDisplay() }
             row(
                 "낭독",
                 "속도 ${speedLabel(app.speed)} · ${app.narrationVoiceName}" + (app.activeVoice?.let { " (${voiceLabel(it)})" } ?: ""),
                 icon = R.drawable.ic_headphones,
+                more = true,
             ) { showNarration() }
             row(
                 "읽기 옵션",
                 "괄호 ${on(options.parentheses)} · 각주 기호 ${on(options.footnoteMarks)} · 약어 풀기 ${on(options.spellAcronyms)}",
                 icon = R.drawable.ic_toc,
+                more = true,
             ) { showReadingOptions() }
-            row("발음 사전", "${app.bookWords.size + app.globalWords.size}개 · 단어를 길게 눌러 바로 고칠 수 있어요", icon = R.drawable.ic_mic) {
+            row("발음 사전", "${app.bookWords.size + app.globalWords.size}개 · 단어를 길게 눌러 바로 고칠 수 있어요", icon = R.drawable.ic_mic, more = true) {
                 showPronunciations()
             }
         }.show()
@@ -322,7 +306,7 @@ class ReaderActivity : AppCompatActivity() {
                 listOf("짧게", "보통", "길게"),
                 PAUSES.indexOf(app.sentencePauseMs).takeIf { it >= 0 } ?: 1,
             ) { app.sentencePauseMs = PAUSES[it] }
-            row("대화문 목소리", app.dialogueVoiceName ?: "서술과 같은 목소리", icon = R.drawable.ic_dialogue) {
+            row("대사 목소리", app.dialogueVoiceName ?: "서술과 같은 목소리", icon = R.drawable.ic_dialogue, more = true) {
                 showDialogueVoice()
             }
         }.show()
@@ -346,8 +330,8 @@ class ReaderActivity : AppCompatActivity() {
     /** Per-book voice for lines of dialogue, e.g. a more expressive model for a novel's quotes. */
     private fun showDialogueVoice() {
         val narration = app.activeVoice
-            ?: return toast("대화문 목소리를 따로 쓰려면 서재의 음성에서 음성 팩을 먼저 골라 주세요")
-        Sheet(this, "대화문 목소리", "따옴표로 시작하는 대사만 이 목소리로 읽어요. 이 책에만 적용돼요.").apply {
+            ?: return toast("대사를 다른 목소리로 읽으려면 서재의 목소리 버튼에서 음성 팩을 먼저 골라 주세요")
+        Sheet(this, "대사 목소리", "따옴표로 시작하는 대사만 이 목소리로 읽어요. 이 책에만 적용돼요.").apply {
             row(
                 "서술과 같은 목소리",
                 "${app.narrationVoiceName} (${voiceLabel(narration)})",
@@ -359,6 +343,7 @@ class ReaderActivity : AppCompatActivity() {
                     voiceLabel(pack),
                     if (current) "지금: ${app.voicesOf(pack).getOrNull(app.dialogueSpeaker)}" else "목소리 ${app.voicesOf(pack).size}개",
                     checked = current,
+                    more = true,
                 ) { pickDialogueVoice(pack) }
             }
         }.show()

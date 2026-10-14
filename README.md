@@ -14,7 +14,7 @@
 
 1. 기기 브라우저에서 [voice-reader.apk](https://github.com/MJ-best/voice-reader/releases/latest/download/voice-reader.apk)를 받습니다([모든 릴리스](https://github.com/MJ-best/voice-reader/releases)).
 2. 받은 파일을 열어 설치합니다. 처음 한 번은 '출처를 알 수 없는 앱 설치'를 허용해야 합니다.
-3. 앱에서 음성 버튼 → **Supertonic 2 받기**로 음성 팩을 받습니다(약 96MB, Wi-Fi 권장).
+3. 앱에서 서재 위쪽 **목소리** 버튼 → **Supertonic 2 받기**로 음성 팩을 받습니다(약 96MB, Wi-Fi 권장).
 
 Android 8.0 이상, arm64 기기에서 동작합니다.
 
@@ -25,7 +25,7 @@ Android 8.0 이상, arm64 기기에서 동작합니다.
   <img src="docs/screenshots/shelves.png" width="31%" alt="소설, 에세이·묵상 책장">
   <img src="docs/screenshots/all-books.png" width="31%" alt="표지 그리드와 진행률">
 </p>
-<p align="center"><sub>서재와 이어 듣기 · 책장으로 묶기 · 전체 보기</sub></p>
+<p align="center"><sub>서재와 이어 듣기 · 책장별로 보기 · 모든 책</sub></p>
 
 <p align="center">
   <img src="docs/screenshots/reading.png" width="31%" alt="대사에 하이라이트가 잡힌 낭독 화면">
@@ -55,13 +55,14 @@ Android 8.0 이상, arm64 기기에서 동작합니다.
 **읽기**
 - [Readium](https://readium.org/) 기반 본문 표시, 목차, 이어 읽기.
 - 테마(라이트·세피아·다크), 글꼴(명조·고딕), 글자 크기, 줄 간격.
-- 화면 가운데 탭으로 메뉴 표시/숨김, 가장자리 탭과 기기 페이지 버튼으로 넘김.
+- 위쪽 바(책 제목, 장, 진행률)와 아래 재생 바(이전 문장 · 듣기 · 다음 문장)는 늘 같은 자리에 있고 본문을 가리지 않습니다. 가장자리 탭과 기기 페이지 버튼으로 넘김.
 
 **낭독**
 - 기기 기본 TTS, 또는 Supertonic 음성 팩([Supertonic](https://huggingface.co/Supertone) · [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), 기기 안에서 합성). 음성 팩은 앱에서 바로 받거나 zip으로 가져옵니다.
 - 읽는 문장 하이라이트와 페이지 자동 넘김, 백그라운드 재생, 잠금화면·이어폰 버튼, 장 이동.
-- 다음 문장을 미리 합성해 끊김 없이 이어 읽습니다.
-- 대화문 목소리: 따옴표로 시작하는 대사만 다른 음성 팩으로 읽습니다(예: 서술은 Supertonic 2, 대사는 Supertonic 3).
+- 다음 문장을 미리 합성해 끊김 없이 이어 읽습니다. 짧은 문장이 이어지면 묶어서 한 번에 읽어, 문장마다 목소리 높이가 튀지 않습니다.
+- 영어로만 된 문장(한국어 책 속 영어 인용문, 언어 정보가 없는 영어책)은 영어로 읽습니다. 영어 단어가 섞인 한국어 문장은 한국어로 읽습니다.
+- 대사 목소리: 따옴표로 시작하는 대사만 다른 음성 팩으로 읽습니다(예: 서술은 Supertonic 2, 대사는 Supertonic 3).
 - 속도, 문장 사이 쉼(짧게·보통·길게).
 
 **한국어 다듬기**
@@ -74,7 +75,9 @@ Android 8.0 이상, arm64 기기에서 동작합니다.
 **e-ink 기기에 맞춘 화면**
 - 순수 흑백. 애니메이션, 그림자, 그라데이션 없이 테두리로 형태를 잡습니다.
 - 누르면 즉시 반전(검은 바탕·흰 글씨), 토글은 "켬 | 끔" 칸 나눔 버튼, 슬라이더 대신 −/+ 버튼.
-- 큰 글씨(본문 18sp)와 넓은 터치 영역(56~72dp).
+- 큰 글씨(본문 18sp)와 넓은 터치 영역(56~80dp). 아이콘 버튼에는 "이전 문장"처럼 하는 일을 글자로 적었습니다.
+- 다른 화면으로 들어가는 줄은 끝에 ›, 고른 항목은 ✓와 굵은 글씨, 확인 창의 주 버튼은 검게 채워 한눈에 구분됩니다.
+- 한글 제목과 설명은 띄어쓰기에서만 줄을 바꿉니다("만난 사 / 람들"처럼 낱말 중간에서 끊기지 않음).
 
 ## 음성 팩
 
@@ -82,7 +85,7 @@ Android 8.0 이상, arm64 기기에서 동작합니다.
 
 ### 앱에서 받기
 
-음성 버튼(지금 쓰는 음성 이름이 적힌 버튼) → **Supertonic 2 받기** 또는 **Supertonic 3 받기**.
+서재 위쪽 **목소리** 버튼 → **Supertonic 2 받기** 또는 **Supertonic 3 받기**.
 sherpa-onnx가 변환해 [Hugging Face](https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-tts-int8-2026-03-06)에 올린 파일을, 앱에 고정해 둔 버전 그대로 받습니다.
 받는 동안 서재 위쪽에 진행률이 보이고, 중간에 끊기면 다시 누를 때 다 받은 파일은 건너뛰고 이어 받습니다.
 
@@ -92,7 +95,7 @@ sherpa-onnx가 변환해 [Hugging Face](https://huggingface.co/csukuangfj2/sherp
 | Supertonic 3 | 약 145MB | 대사·감정 표현. 합성이 서너 배 느립니다 |
 
 <p align="center">
-  <img src="docs/screenshots/voice-download.png" width="31%" alt="낭독 음성 시트의 Supertonic 3 받기">
+  <img src="docs/screenshots/voice-download.png" width="31%" alt="목소리 시트의 Supertonic 3 받기">
   <img src="docs/screenshots/download-confirm.png" width="31%" alt="받기 확인 창: 약 145MB, Wi-Fi 권장">
   <img src="docs/screenshots/download-progress.png" width="31%" alt="서재 위쪽의 받는 중 진행률">
 </p>
@@ -108,19 +111,19 @@ cd sherpa-onnx-supertonic-tts-int8-2026-03-06 && zip ../supertonic-2.zip *.onnx 
 ```
 
 Supertonic 3은 `sherpa-onnx-supertonic-3-tts-int8-2026-05-11`을 같은 방법으로 묶습니다.
-만든 zip을 기기에 옮긴 뒤, 음성 버튼 → **음성 팩 가져오기 (zip)** 로 설치합니다. zip 파일 이름이 음성 이름이 됩니다.
+만든 zip을 기기에 옮긴 뒤, **목소리** 버튼 → **음성 팩 파일로 설치**로 설치합니다. zip 파일 이름이 음성 이름이 됩니다.
 
 ### 목소리 고르기
 
-<img src="docs/screenshots/voices.png" width="240" alt="낭독 음성 고르기와 음성 팩 가져오기">
+<img src="docs/screenshots/voices.png" width="240" alt="목소리 고르기와 음성 팩 설치">
 
 음성 팩 행을 누르면 그 팩의 목소리 10종(여성 1~5, 남성 1~5)이 나오고, 누르는 즉시 그 목소리로 바뀌어 한 문장을 들려 줍니다.
-대화문 목소리도 리더의 설정 → 낭독 → 대화문 목소리에서 같은 방법으로 고릅니다.
+대사 목소리도 리더의 설정 → 낭독 → 대사 목소리에서 같은 방법으로 고릅니다.
 
 ### 목소리 파일 가져오기
 
 Supertonic Voice Builder 등에서 만든 목소리 파일(`style_ttl`·`style_dp`가 든 JSON)을 설치된 음성 팩에 덧붙일 수 있습니다.
-음성 버튼 → **목소리 파일 가져오기 (JSON)** → 넣을 음성 팩을 고르면, 그 팩의 목록 맨 끝에 파일 이름으로 추가됩니다.
+**목소리** 버튼 → **직접 만든 목소리 넣기** → 넣을 음성 팩을 고르면, 그 팩의 목록 맨 끝에 파일 이름으로 추가됩니다.
 목소리 파일은 만든 모델 버전과 같은 팩에 넣어야 합니다(Supertonic 2용은 Supertonic 2에).
 
 어떤 모델을 왜 골랐는지는 [spike/RESULTS.md](spike/RESULTS.md)에 정리했습니다(Supertonic 2·3, MMS, Mimic3 비교).

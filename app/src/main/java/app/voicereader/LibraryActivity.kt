@@ -81,7 +81,7 @@ class LibraryActivity : AppCompatActivity() {
     private val pickVoicePack = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) lifecycleScope.launch {
             toast("음성 팩을 설치하는 중…")
-            toast(app.importVoicePack(uri) ?: "음성 팩을 설치했어요. 대화문 목소리는 책을 연 뒤 설정 → 낭독에서 고를 수 있어요.")
+            toast(app.importVoicePack(uri) ?: "음성 팩을 설치했어요. 대사만 다른 목소리로 들으려면 책을 연 뒤 설정 → 낭독에서 고르세요.")
             refresh()
         }
     }
@@ -174,7 +174,7 @@ class LibraryActivity : AppCompatActivity() {
         if (app.canReadAllFiles()) return app.startDeviceScan(announce = true)
         MaterialAlertDialogBuilder(this)
             .setTitle("기기의 EPUB 찾기")
-            .setMessage(
+            .message(
                 "기기 안의 EPUB을 모두 찾으려면 ‘모든 파일에 접근’ 권한이 필요해요.\n\n" +
                     "책 파일을 읽기만 하고, 고치거나 지우거나 기기 밖으로 보내지 않아요. " +
                     "다음 화면에서 허용한 뒤 돌아오면 바로 찾기 시작해요.",
@@ -215,7 +215,7 @@ class LibraryActivity : AppCompatActivity() {
     private fun showBookActions(book: Book) {
         val onShelves = app.shelves.filter { book.id in it.bookIds }.joinToString { it.name }
         Sheet(this, book.title, book.author.ifBlank { null }).apply {
-            row("책장 정하기", onShelves.ifEmpty { "아직 어느 책장에도 없어요" }, icon = R.drawable.ic_shelf) { pickShelves(book) }
+            row("책장 정하기", onShelves.ifEmpty { "아직 어느 책장에도 없어요" }, icon = R.drawable.ic_shelf, more = true) { pickShelves(book) }
             row(if (book.path != null) "서재에서 빼기" else "서재에서 삭제", icon = R.drawable.ic_delete) { confirmDelete(book) }
         }.show()
     }
@@ -235,7 +235,7 @@ class LibraryActivity : AppCompatActivity() {
 
     private fun showShelfActions(shelf: Shelf) {
         Sheet(this, shelf.name, "${shelf.bookIds.size}권").apply {
-            row("책 넣고 빼기", icon = R.drawable.ic_check_box) { pickBooks(shelf) }
+            row("책 넣고 빼기", icon = R.drawable.ic_check_box, more = true) { pickBooks(shelf) }
             row("이름 바꾸기", icon = R.drawable.ic_text) { nameShelf(shelf) }
             row("책장 지우기", "책은 서재에 그대로 남아요", icon = R.drawable.ic_delete) { confirmDeleteShelf(shelf) }
         }.show()
@@ -293,7 +293,7 @@ class LibraryActivity : AppCompatActivity() {
     private fun confirmDeleteShelf(shelf: Shelf) {
         MaterialAlertDialogBuilder(this)
             .setTitle("‘${shelf.name}’ 지우기")
-            .setMessage("책장만 지우고, 그 안의 책은 서재에 그대로 남아요.")
+            .message("책장만 지우고, 그 안의 책은 서재에 그대로 남아요.")
             .setPositiveButton("지우기") { _, _ ->
                 app.deleteShelf(shelf)
                 refresh()
@@ -309,10 +309,12 @@ class LibraryActivity : AppCompatActivity() {
         } else {
             "서재에서 이 책을 지울까요? 읽던 위치와 이 책의 발음 사전도 함께 지워져요."
         }
+        // A book read in place is only taken off the list (its file stays); a copied one is deleted. Say which.
+        val action = if (book.path != null) "빼기" else "삭제"
         MaterialAlertDialogBuilder(this)
-            .setTitle("‘${book.title}’ 삭제")
-            .setMessage(message)
-            .setPositiveButton("삭제") { _, _ ->
+            .setTitle(if (book.path != null) "‘${book.title}’ 서재에서 빼기" else "‘${book.title}’ 삭제")
+            .message(message)
+            .setPositiveButton(action) { _, _ ->
                 app.deleteBook(book)
                 refresh()
             }
@@ -322,8 +324,8 @@ class LibraryActivity : AppCompatActivity() {
 
     /** The narration voice for every book: the system TTS, or a voice of an installed pack. */
     private fun showVoices() {
-        Sheet(this, "낭독 음성", "모든 책의 서술에 쓰는 목소리예요. 대화문 목소리는 책을 연 뒤 설정 → 낭독에서 따로 고를 수 있어요.").apply {
-            row("기기 기본 음성", "Android TTS", icon = R.drawable.ic_voice, checked = app.activeVoice == null) {
+        Sheet(this, "목소리", "모든 책을 읽어 줄 목소리예요. 대사만 다른 목소리로 들으려면 책을 연 뒤 설정 → 낭독 → 대사 목소리에서 고르세요.").apply {
+            row("기기 기본 음성", "이 기기에 설치된 음성", icon = R.drawable.ic_voice, checked = app.activeVoice == null) {
                 app.activeVoice = null
                 refresh()
             }
@@ -332,9 +334,13 @@ class LibraryActivity : AppCompatActivity() {
                 val current = pack == app.activeVoice
                 row(
                     voiceLabel(pack),
-                    if (current) "지금: ${app.narrationVoiceName}" else "목소리 ${app.voicesOf(pack).size}개",
+                    listOfNotNull(
+                        if (current) "지금: ${app.narrationVoiceName}" else "목소리 ${app.voicesOf(pack).size}개",
+                        DOWNLOADABLE_PACKS.find { it.name == pack }?.note,
+                    ).joinToString(" · "),
                     icon = R.drawable.ic_headphones,
                     checked = current,
+                    more = true,
                 ) { pickNarrationVoice(pack) }
             }
             DOWNLOADABLE_PACKS.filter { it.name !in packs }.forEach { source ->
@@ -345,8 +351,8 @@ class LibraryActivity : AppCompatActivity() {
                     icon = R.drawable.ic_add,
                 ) { if (!downloading) confirmDownload(source) }
             }
-            button("음성 팩 가져오기 (zip)") { confirmConsent { pickVoicePack.launch(arrayOf("application/zip", "application/octet-stream")) } }
-            button("목소리 파일 가져오기 (JSON)") {
+            button("음성 팩 파일로 설치") { confirmConsent { pickVoicePack.launch(arrayOf("application/zip", "application/octet-stream")) } }
+            button("직접 만든 목소리 넣기") {
                 confirmConsent { pickVoiceStyle.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
             }
         }.show()
@@ -355,7 +361,7 @@ class LibraryActivity : AppCompatActivity() {
     private fun confirmDownload(source: PackSource) {
         MaterialAlertDialogBuilder(this)
             .setTitle("${voiceLabel(source.name)} 받기")
-            .setMessage(
+            .message(
                 "인터넷(Hugging Face)에서 음성 팩 약 ${source.bytes / 1_000_000}MB를 받아요. Wi-Fi에서 받기를 권해요.\n\n" +
                     "받는 동안 서재 위쪽에 진행률이 보여요.",
             )
@@ -398,7 +404,7 @@ class LibraryActivity : AppCompatActivity() {
     private fun confirmConsent(then: () -> Unit) {
         MaterialAlertDialogBuilder(this)
             .setTitle("목소리 사용 동의")
-            .setMessage(
+            .message(
                 "본인의 목소리이거나, 화자에게 이 앱에서 쓰는 것에 대해 명시적인 동의를 받은 목소리만 가져올 수 있어요.\n\n" +
                     "실존 인물(성우·배우·가수 등)의 목소리를 동의 없이 복제한 음성 팩이나 목소리 파일은 가져오지 마세요.",
             )
@@ -438,7 +444,9 @@ class LibraryActivity : AppCompatActivity() {
             val inflater = LayoutInflater.from(parent.context)
             val view = inflater.inflate(viewType, parent, false)
             if (viewType != R.layout.library_item) {
-                view.layoutParams = StaggeredGridLayoutManager.LayoutParams(view.layoutParams).apply { isFullSpan = true }
+                // From the MarginLayoutParams, or the layout's margins are dropped and neighbors touch.
+                view.layoutParams = StaggeredGridLayoutManager.LayoutParams(view.layoutParams as ViewGroup.MarginLayoutParams)
+                    .apply { isFullSpan = true }
             }
             if (viewType == R.layout.library_shelf) {
                 val covers = view.findViewById<LinearLayout>(R.id.covers)
@@ -475,7 +483,7 @@ class LibraryActivity : AppCompatActivity() {
                 ?: if (books.isEmpty()) "" else "${books.size}권"
             view.findViewById<View>(R.id.actions).isVisible = books.isNotEmpty() // the empty state has its own buttons
             view.findViewById<MaterialButton>(R.id.voice).apply {
-                text = app.narrationVoiceName
+                text = "목소리 · ${app.narrationVoiceName}"
                 setOnClickListener { showVoices() }
             }
             view.findViewById<View>(R.id.add).setOnClickListener { showAddSheet() }
@@ -490,7 +498,7 @@ class LibraryActivity : AppCompatActivity() {
                 progress == null -> "읽기 시작"
                 else -> "이어 듣기"
             }
-            view.findViewById<TextView>(R.id.title).text = book.title
+            view.findViewById<TextView>(R.id.title).text = book.title.keepWords()
             view.findViewById<TextView>(R.id.meta).text = meta(book)
             view.findViewById<LinearProgressIndicator>(R.id.progress).apply {
                 isVisible = progress != null
@@ -505,7 +513,7 @@ class LibraryActivity : AppCompatActivity() {
         }
 
         private fun bindTabs(view: View) {
-            view.findViewById<MaterialButton>(R.id.tabAll).text = "전체 ${books.size}"
+            view.findViewById<MaterialButton>(R.id.tabAll).text = "모든 책 ${books.size}"
             view.findViewById<MaterialButtonToggleGroup>(R.id.tabs).apply {
                 clearOnButtonCheckedListeners()
                 check(if (app.showShelves) R.id.tabShelves else R.id.tabAll)
@@ -524,7 +532,8 @@ class LibraryActivity : AppCompatActivity() {
             val shown = row.books.drop(page * PER_SHELF_PAGE).take(PER_SHELF_PAGE)
             view.findViewById<TextView>(R.id.name).text = row.title
             view.findViewById<TextView>(R.id.count).text =
-                if (lastPage == 0) "${row.books.size}권" else "${row.books.size}권 · ${page + 1}/${lastPage + 1}"
+                if (lastPage == 0) "${row.books.size}권"
+                else "${row.books.size}권 중 ${page * PER_SHELF_PAGE + 1}~${page * PER_SHELF_PAGE + shown.size}번째"
             fun turn(delta: Int) {
                 shelfPages[row.key] = page + delta
                 notifyItemChanged(position) // only this shelf redraws
@@ -552,7 +561,7 @@ class LibraryActivity : AppCompatActivity() {
                 title.isInvisible = book == null
                 if (book == null) continue
                 bindCover(book, slot.findViewById(R.id.cover), slot.findViewById(R.id.placeholder))
-                title.text = book.title
+                title.text = book.title.keepWords()
                 slot.contentDescription = book.title
                 slot.setOnClickListener { open(book) }
                 slot.setOnLongClickListener {
@@ -564,7 +573,7 @@ class LibraryActivity : AppCompatActivity() {
 
         private fun bindPin(view: View, book: Book) {
             bindCover(book, view.findViewById(R.id.cover), view.findViewById(R.id.placeholder))
-            view.findViewById<TextView>(R.id.title).text = book.title
+            view.findViewById<TextView>(R.id.title).text = book.title.keepWords()
             view.findViewById<TextView>(R.id.meta).text = meta(book)
             view.setOnClickListener { open(book) }
             view.setOnLongClickListener {

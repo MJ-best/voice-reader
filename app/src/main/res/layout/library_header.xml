@@ -42,7 +42,7 @@
             android:layout_height="56dp"
             android:layout_marginEnd="6dp"
             android:layout_weight="1"
-            android:contentDescription="낭독 음성 고르기"
+            android:contentDescription="목소리 고르기"
             android:ellipsize="end"
             android:maxLines="1"
             app:icon="@drawable/ic_voice"

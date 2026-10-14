@@ -12,9 +12,18 @@ import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlin.math.roundToInt
 
 fun Context.dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
+
+/**
+ * Android breaks Korean between any two syllables ("만난 사 / 람들"). Glue each word with invisible word joiners so
+ * lines break only at spaces, the way Korean is set, on every Android version (a word too long for a line still breaks).
+ */
+fun String.keepWords(): String = replace(Regex("""(?<=\S)(?=\S)"""), "\u2060")
+
+fun MaterialAlertDialogBuilder.message(text: String): MaterialAlertDialogBuilder = apply { setMessage(text.keepWords()) }
 
 /** A voice pack's folder name as people read it: "supertonic-2" → "Supertonic 2". */
 fun voiceLabel(name: String): String = name.replace('-', ' ').replace('_', ' ').replaceFirstChar { it.uppercase() }
@@ -46,7 +55,10 @@ class Sheet(private val context: Context, title: String, hint: String? = null) {
         }
     }
 
-    /** A tappable row that closes the sheet. [checked] marks the chosen option, [current] where the reader is. */
+    /**
+     * A tappable row that closes the sheet. [checked] marks the chosen option, [current] where the reader is, [more]
+     * that it opens another sheet (a › at the end, so it reads as a way in rather than an action).
+     */
     fun row(
         title: String,
         subtitle: String? = null,
@@ -54,6 +66,7 @@ class Sheet(private val context: Context, title: String, hint: String? = null) {
         checked: Boolean = false,
         current: Boolean = false,
         indent: Int = 0,
+        more: Boolean = false,
         onClick: () -> Unit,
     ): Sheet = apply {
         column.addView(LinearLayout(context).apply {
@@ -97,6 +110,15 @@ class Sheet(private val context: Context, title: String, hint: String? = null) {
                     isDuplicateParentStateEnabled = true
                     contentDescription = "선택됨"
                     layoutParams = LinearLayout.LayoutParams(context.dp(28), context.dp(28))
+                })
+            }
+            if (more) {
+                addView(ImageView(context).apply {
+                    setImageResource(R.drawable.ic_chevron_right)
+                    imageTintList = context.getColorStateList(R.color.row_fg)
+                    isDuplicateParentStateEnabled = true
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    layoutParams = LinearLayout.LayoutParams(context.dp(28), context.dp(28)).apply { marginStart = context.dp(8) }
                 })
             }
         })
@@ -147,6 +169,14 @@ class Sheet(private val context: Context, title: String, hint: String? = null) {
      * listener can try several (e.g. hear each voice) before closing it.
      */
     fun pick(labels: List<String>, selected: Int, onPick: (Int) -> Unit): Sheet = apply {
+        val names = labels.mapIndexed { i, label ->
+            text(label, R.style.Text_Body).apply {
+                setTextColor(context.getColorStateList(R.color.row_fg))
+                isDuplicateParentStateEnabled = true
+                setTypeface(typeface, if (i == selected) Typeface.BOLD else Typeface.NORMAL)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+        }
         val checks = labels.indices.map { i ->
             ImageView(context).apply {
                 setImageResource(R.drawable.ic_check)
@@ -157,7 +187,7 @@ class Sheet(private val context: Context, title: String, hint: String? = null) {
                 layoutParams = LinearLayout.LayoutParams(context.dp(28), context.dp(28))
             }
         }
-        labels.forEachIndexed { i, label ->
+        labels.indices.forEach { i ->
             column.addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -166,13 +196,10 @@ class Sheet(private val context: Context, title: String, hint: String? = null) {
                 setBackgroundResource(R.drawable.row_bg)
                 setOnClickListener {
                     checks.forEachIndexed { j, check -> check.visibility = if (j == i) View.VISIBLE else View.INVISIBLE }
+                    names.forEachIndexed { j, name -> name.setTypeface(Typeface.create(name.typeface, if (j == i) Typeface.BOLD else Typeface.NORMAL)) }
                     onPick(i)
                 }
-                addView(text(label, R.style.Text_Body).apply {
-                    setTextColor(context.getColorStateList(R.color.row_fg))
-                    isDuplicateParentStateEnabled = true
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                })
+                addView(names[i])
                 addView(checks[i])
             })
         }
@@ -271,6 +298,6 @@ class Sheet(private val context: Context, title: String, hint: String? = null) {
 
     private fun text(value: String, style: Int) = TextView(context).apply {
         setTextAppearance(style)
-        text = value
+        text = value.keepWords()
     }
 }
