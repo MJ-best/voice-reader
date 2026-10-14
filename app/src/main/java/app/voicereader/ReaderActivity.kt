@@ -4,16 +4,19 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.media.AudioManager
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.ActionMode
 import android.view.KeyEvent as AndroidKeyEvent
 import android.view.Menu
 import android.view.MenuItem
+import android.view.MotionEvent
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -42,6 +45,16 @@ import org.readium.r2.shared.util.Url
 private val SPEEDS = listOf(0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
 private val PAUSES = listOf(60, 150, 320) // ms of silence between sentences: short, normal, long
 private val THEMES = listOf(Theme.LIGHT, Theme.SEPIA, Theme.DARK)
+/** Page keys, and scroll wheels that send arrow keys: true turns forward. */
+private val PAGE_KEYS = mapOf(
+    AndroidKeyEvent.KEYCODE_PAGE_DOWN to true, AndroidKeyEvent.KEYCODE_DPAD_DOWN to true,
+    AndroidKeyEvent.KEYCODE_DPAD_RIGHT to true, AndroidKeyEvent.KEYCODE_NAVIGATE_NEXT to true,
+    AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_DOWN to true,
+    AndroidKeyEvent.KEYCODE_PAGE_UP to false, AndroidKeyEvent.KEYCODE_DPAD_UP to false,
+    AndroidKeyEvent.KEYCODE_DPAD_LEFT to false, AndroidKeyEvent.KEYCODE_NAVIGATE_PREVIOUS to false,
+    AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_UP to false,
+)
+
 private val MEDIA_KEYS = setOf(
     AndroidKeyEvent.KEYCODE_HEADSETHOOK, AndroidKeyEvent.KEYCODE_MEDIA_PLAY, AndroidKeyEvent.KEYCODE_MEDIA_PAUSE,
     AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, AndroidKeyEvent.KEYCODE_MEDIA_NEXT, AndroidKeyEvent.KEYCODE_MEDIA_PREVIOUS,
@@ -58,6 +71,7 @@ class ReaderActivity : AppCompatActivity() {
     private val app get() = application as App
     private lateinit var navigator: EpubNavigatorFragment
     private lateinit var topBar: View
+    private lateinit var listen: MaterialButton
 
     /** Adds "발음 고치기" to the text selection menu, next to Copy: long-press a word, fix how it is read. */
     private val selectionActions = object : ActionMode.Callback {
@@ -99,7 +113,6 @@ class ReaderActivity : AppCompatActivity() {
         setContentView(R.layout.reader)
         navigator = supportFragmentManager.findFragmentById(R.id.navigator) as EpubNavigatorFragment
         topBar = findViewById(R.id.topBar)
-        findViewById<TextView>(R.id.bookTitle).text = app.book?.title
         applyPageTheme(app.readerPrefs.theme ?: Theme.LIGHT)
         app.warmUpVoice()
 
@@ -107,13 +120,17 @@ class ReaderActivity : AppCompatActivity() {
         findViewById<View>(R.id.toc).setOnClickListener { showToc() }
         findViewById<View>(R.id.settings).setOnClickListener { showSettings() }
 
-        val play = findViewById<MaterialButton>(R.id.play)
+        listen = findViewById(R.id.listen)
+        val player = findViewById<View>(R.id.player)
+        val playerRule = findViewById<View>(R.id.playerRule)
         val chapter = findViewById<TextView>(R.id.chapter)
-        play.setOnClickListener { togglePlay() }
+        listen.setOnClickListener { togglePlay() }
+        findViewById<View>(R.id.play).setOnClickListener { togglePlay() }
         findViewById<View>(R.id.prev).setOnClickListener { app.tts.value?.skipToPreviousUtterance() }
         findViewById<View>(R.id.next).setOnClickListener { app.tts.value?.skipToNextUtterance() }
 
-        // Taps near the edges and the device's page keys turn pages, without animation. The bars never move.
+        // Taps near the edges turn pages, without animation (page keys and the scroll wheel: dispatchKeyEvent and
+        // dispatchGenericMotionEvent below).
         navigator.addInputListener(DirectionalNavigationAdapter(navigator, animatedTransition = false))
 
         if (savedInstanceState == null && intent.getBooleanExtra(AUTOPLAY, false) && app.tts.value == null) {
@@ -122,14 +139,16 @@ class ReaderActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                val playing = app.tts.flatMapLatest { it?.playback ?: flowOf(null) }
+                    .map { it?.playWhenReady == true }
+                    .distinctUntilChanged()
                 launch {
-                    app.tts.flatMapLatest { it?.playback ?: flowOf(null) }
-                        .map { it?.playWhenReady == true }
-                        .distinctUntilChanged()
-                        .collect { playing ->
-                            play.setIconResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play)
-                            play.text = if (playing) "일시정지" else "듣기"
-                        }
+                    // The player only while listening, so reading by eye gets the whole height; 듣기 sits in the top bar.
+                    playing.collect {
+                        player.isVisible = it
+                        playerRule.isVisible = it
+                        listen.isVisible = !it
+                    }
                 }
                 launch {
                     navigator.currentLocator.collect { locator ->
@@ -144,7 +163,8 @@ class ReaderActivity : AppCompatActivity() {
                 // A jump into another chapter first lands wherever that chapter was pre-laid-out (e.g. its
                 // last page), so re-sync once the navigator reports the new chapter.
                 val chapters = navigator.currentLocator.map { it.href }.distinctUntilChanged()
-                combine(utterances, chapters) { utterance, _ -> utterance }
+                // Only while playing: a paused session neither marks a sentence nor pulls the page back to it.
+                combine(utterances, chapters, playing) { utterance, _, on -> utterance.takeIf { on } }
                     .collect { utterance ->
                         val highlight = utterance?.let {
                             Decoration("tts", it, Decoration.Style.Highlight(tint = getColor(R.color.highlight)))
@@ -157,11 +177,38 @@ class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** The page's WebView swallows media keys (earphone buttons) while it has focus; hand them to the TTS session. */
+    /**
+     * Media keys (earphone buttons) go to the TTS session: the page's WebView would swallow them. Page keys turn the
+     * page wherever the focus is: arrow keys would otherwise walk between the bars' buttons.
+     */
     override fun dispatchKeyEvent(event: AndroidKeyEvent): Boolean {
-        if (event.keyCode !in MEDIA_KEYS || app.session == null) return super.dispatchKeyEvent(event)
-        getSystemService(AudioManager::class.java).dispatchMediaKeyEvent(event)
+        if (event.keyCode in MEDIA_KEYS && app.session != null) {
+            getSystemService(AudioManager::class.java).dispatchMediaKeyEvent(event)
+            return true
+        }
+        val forward = PAGE_KEYS[event.keyCode] ?: return super.dispatchKeyEvent(event)
+        if (event.action == AndroidKeyEvent.ACTION_DOWN) turnPage(forward)
         return true
+    }
+
+    /** A scroll wheel, rotary dial or mouse wheel turns pages: down or clockwise is forward. */
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.action != MotionEvent.ACTION_SCROLL) return super.dispatchGenericMotionEvent(event)
+        val amount = -event.getAxisValue(MotionEvent.AXIS_VSCROLL) +
+            event.getAxisValue(MotionEvent.AXIS_HSCROLL) + event.getAxisValue(MotionEvent.AXIS_SCROLL)
+        if (amount == 0f) return super.dispatchGenericMotionEvent(event)
+        turnPage(amount > 0)
+        return true
+    }
+
+    private var lastTurn = 0L
+
+    /** One page per notch: a wheel sends a burst of events, and e-ink takes a moment to redraw anyway. */
+    private fun turnPage(forward: Boolean) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastTurn < 250) return
+        lastTurn = now
+        if (forward) navigator.goForward(animated = false) else navigator.goBackward(animated = false)
     }
 
     override fun onStop() {
@@ -180,7 +227,6 @@ class ReaderActivity : AppCompatActivity() {
         findViewById<View>(R.id.player).setBackgroundColor(page)
         findViewById<View>(R.id.topBarRule).setBackgroundColor(ink)
         findViewById<View>(R.id.playerRule).setBackgroundColor(ink)
-        findViewById<TextView>(R.id.bookTitle).setTextColor(ink)
         findViewById<TextView>(R.id.chapter).setTextColor(ink)
         findViewById<MaterialButton>(R.id.back).apply {
             iconTint = ColorStateList(pressed, intArrayOf(page, ink))
@@ -193,7 +239,14 @@ class ReaderActivity : AppCompatActivity() {
     private fun togglePlay() {
         val nav = app.tts.value
         when {
-            nav == null -> lifecycleScope.launch { app.startTts(navigator.firstVisibleElementLocator()) }
+            nav == null -> lifecycleScope.launch {
+                listen.text = "준비 중…" // loading the voice can take seconds on an e-ink device
+                try {
+                    app.startTts(navigator.firstVisibleElementLocator())
+                } finally {
+                    listen.text = "듣기"
+                }
+            }
             nav.playback.value.playWhenReady -> nav.pause()
             else -> nav.play()
         }

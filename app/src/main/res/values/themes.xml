@@ -53,6 +53,13 @@
         <item name="buttonBarPositiveButtonStyle">@style/Widget.VoiceReader.Button.Dialog.Filled</item>
         <item name="buttonBarNegativeButtonStyle">@style/Widget.VoiceReader.Button.Dialog</item>
         <item name="buttonBarNeutralButtonStyle">@style/Widget.VoiceReader.Button.Dialog</item>
+        <item name="materialAlertDialogTitleTextStyle">@style/VoiceReader.DialogTitle</item>
+    </style>
+
+    <!-- Bold like the sheets' titles. -->
+    <style name="VoiceReader.DialogTitle" parent="MaterialAlertDialog.Material3.Title.Text">
+        <item name="android:textSize">22sp</item>
+        <item name="android:textStyle">bold</item>
     </style>
 
     <!-- Outlined: white with a 2dp black border; black while pressed or selected (toggle groups). -->
@@ -78,9 +85,11 @@
         <item name="iconTint">@color/btn_filled_fg</item>
     </style>
 
+    <!-- The top margin keeps buttons apart when a long label stacks them. -->
     <style name="Widget.VoiceReader.Button.Dialog">
         <item name="android:minHeight">52dp</item>
         <item name="android:layout_marginStart">8dp</item>
+        <item name="android:layout_marginTop">8dp</item>
     </style>
 
     <!-- The main action of a dialog (받기, 삭제, 저장…) is filled, so it stands apart from 취소 at a glance. -->

@@ -91,7 +91,7 @@ class Sheet(private val context: Context, title: String, hint: String? = null) {
                 orientation = LinearLayout.VERTICAL
                 isDuplicateParentStateEnabled = true
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                addView(text(if (current) "▶  $title" else title, R.style.Text_Body).apply {
+                addView(text(title, R.style.Text_Body).apply {
                     setTextColor(context.getColorStateList(R.color.row_fg))
                     isDuplicateParentStateEnabled = true
                     if (current || checked) setTypeface(typeface, Typeface.BOLD)
@@ -103,6 +103,14 @@ class Sheet(private val context: Context, title: String, hint: String? = null) {
                     })
                 }
             })
+            if (current) {
+                // Marked at the end, not with a prefix: a "▶ " pushed this row's text out of line with the others.
+                addView(text("읽는 중", R.style.Text_Caption).apply {
+                    setTextColor(context.getColorStateList(R.color.row_fg_muted))
+                    isDuplicateParentStateEnabled = true
+                    setPadding(context.dp(8), 0, 0, 0)
+                })
+            }
             if (checked) {
                 addView(ImageView(context).apply {
                     setImageResource(R.drawable.ic_check)

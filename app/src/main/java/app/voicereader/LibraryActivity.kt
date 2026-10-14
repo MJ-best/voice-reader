@@ -408,7 +408,7 @@ class LibraryActivity : AppCompatActivity() {
                 "본인의 목소리이거나, 화자에게 이 앱에서 쓰는 것에 대해 명시적인 동의를 받은 목소리만 가져올 수 있어요.\n\n" +
                     "실존 인물(성우·배우·가수 등)의 목소리를 동의 없이 복제한 음성 팩이나 목소리 파일은 가져오지 마세요.",
             )
-            .setPositiveButton("동의하고 파일 고르기") { _, _ -> then() }
+            .setPositiveButton("동의하고 고르기") { _, _ -> then() }
             .setNegativeButton("취소", null)
             .show()
     }
