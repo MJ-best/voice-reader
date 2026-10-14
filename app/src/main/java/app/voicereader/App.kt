@@ -10,6 +10,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.PowerManager
 import android.os.storage.StorageManager
 import android.provider.OpenableColumns
 import android.util.AtomicFile
@@ -167,6 +168,13 @@ class App : Application(), TtsNavigator.Listener {
     var session: MediaSession? = null
         private set
     private var ttsJob: Job? = null
+    // With the screen off the CPU may sleep between sentences (no audio plays while the next one is synthesized
+    // or during the pause), so hold it awake while reading aloud. The timeout is renewed on every sentence.
+    private val wakeLock by lazy {
+        (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "voicereader:tts")
+            .apply { setReferenceCounted(false) }
+    }
 
     fun epub(book: Book) = book.path?.let(::File) ?: File(dir, "${book.id}.epub")
     fun cover(book: Book) = File(dir, "${book.id}.jpg")
@@ -703,6 +711,7 @@ class App : Application(), TtsNavigator.Listener {
         ttsJob = scope.launch {
             launch { nav.currentLocator.sample(3000).collect { saveLocator(it) } }
             nav.playback.collect { playback ->
+                if (playback.playWhenReady) wakeLock.acquire(10 * 60_000L) else wakeLock.release()
                 when (val state = playback.state) {
                     is TtsNavigator.State.Ended -> stopTts()
                     is TtsNavigator.State.Failure -> {
@@ -732,6 +741,7 @@ class App : Application(), TtsNavigator.Listener {
         session = null
         nav.close()
         stopService(Intent(this, PlaybackService::class.java))
+        wakeLock.release()
         ttsJob?.cancel() // last: may cancel the coroutine calling us
     }
 

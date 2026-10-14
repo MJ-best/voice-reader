@@ -4,6 +4,7 @@
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Finding every EPUB on the device (read in place). Android 11+: "all files access", granted by the user in
          system settings; this is a sideloaded reader, not a Play Store app. Older versions: the storage permission. -->

@@ -2,8 +2,10 @@ package app.voicereader
 
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.media.AudioManager
 import android.os.Bundle
 import android.view.ActionMode
+import android.view.KeyEvent as AndroidKeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -44,6 +46,11 @@ import org.readium.r2.shared.util.Url
 private val SPEEDS = listOf(0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
 private val PAUSES = listOf(60, 150, 320) // ms of silence between sentences: short, normal, long
 private val THEMES = listOf(Theme.LIGHT, Theme.SEPIA, Theme.DARK)
+private val MEDIA_KEYS = setOf(
+    AndroidKeyEvent.KEYCODE_HEADSETHOOK, AndroidKeyEvent.KEYCODE_MEDIA_PLAY, AndroidKeyEvent.KEYCODE_MEDIA_PAUSE,
+    AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, AndroidKeyEvent.KEYCODE_MEDIA_NEXT, AndroidKeyEvent.KEYCODE_MEDIA_PREVIOUS,
+    AndroidKeyEvent.KEYCODE_MEDIA_STOP,
+)
 
 class ReaderActivity : AppCompatActivity() {
 
@@ -163,6 +170,13 @@ class ReaderActivity : AppCompatActivity() {
                     }
             }
         }
+    }
+
+    /** The page's WebView swallows media keys (earphone buttons) while it has focus; hand them to the TTS session. */
+    override fun dispatchKeyEvent(event: AndroidKeyEvent): Boolean {
+        if (event.keyCode !in MEDIA_KEYS || app.session == null) return super.dispatchKeyEvent(event)
+        getSystemService(AudioManager::class.java).dispatchMediaKeyEvent(event)
+        return true
     }
 
     override fun onStop() {
