@@ -254,7 +254,7 @@ class ReaderActivity : AppCompatActivity() {
             ) { showDisplay() }
             row(
                 "낭독",
-                "속도 ${speedLabel(app.speed)} · ${app.activeVoice?.let(::voiceLabel) ?: "기기 음성"}",
+                "속도 ${speedLabel(app.speed)} · ${app.narrationVoiceName}" + (app.activeVoice?.let { " (${voiceLabel(it)})" } ?: ""),
                 icon = R.drawable.ic_headphones,
             ) { showNarration() }
             row(
@@ -308,7 +308,7 @@ class ReaderActivity : AppCompatActivity() {
                 listOf("짧게", "보통", "길게"),
                 PAUSES.indexOf(app.sentencePauseMs).takeIf { it >= 0 } ?: 1,
             ) { app.sentencePauseMs = PAUSES[it] }
-            row("대화문 목소리", app.dialogueVoice?.let(::voiceLabel) ?: "서술과 같은 목소리", icon = R.drawable.ic_dialogue) {
+            row("대화문 목소리", app.dialogueVoiceName ?: "서술과 같은 목소리", icon = R.drawable.ic_dialogue) {
                 showDialogueVoice()
             }
         }.show()
@@ -334,13 +334,31 @@ class ReaderActivity : AppCompatActivity() {
         val narration = app.activeVoice
             ?: return toast("대화문 목소리를 따로 쓰려면 서재의 음성에서 음성 팩을 먼저 골라 주세요")
         Sheet(this, "대화문 목소리", "따옴표로 시작하는 대사만 이 목소리로 읽어요. 이 책에만 적용돼요.").apply {
-            row("서술과 같은 목소리", voiceLabel(narration), checked = app.dialogueVoice == null) { app.dialogueVoice = null }
-            (app.voicePacks() - narration).forEach { pack ->
-                row(voiceLabel(pack), "음성 팩", checked = app.dialogueVoice == pack) {
-                    app.dialogueVoice = pack
-                    app.warmUpVoice()
-                }
+            row(
+                "서술과 같은 목소리",
+                "${app.narrationVoiceName} (${voiceLabel(narration)})",
+                checked = app.dialogueVoice == null,
+            ) { app.dialogueVoice = null }
+            app.voicePacks().forEach { pack ->
+                val current = app.dialogueVoice == pack
+                row(
+                    voiceLabel(pack),
+                    if (current) "지금: ${app.voicesOf(pack).getOrNull(app.dialogueSpeaker)}" else "목소리 ${app.voicesOf(pack).size}개",
+                    checked = current,
+                ) { pickDialogueVoice(pack) }
             }
+        }.show()
+    }
+
+    /** The voices of [pack] for this book's dialogue; each tap selects it and says a sentence in it. */
+    private fun pickDialogueVoice(pack: String) {
+        val selected = if (app.dialogueVoice == pack) app.dialogueSpeaker else -1
+        Sheet(this, voiceLabel(pack), "누르면 그 목소리로 고르고 들려 드려요").apply {
+            pick(app.voicesOf(pack), selected) { sid ->
+                app.setDialogueVoice(pack, sid)
+                app.previewVoice(pack, sid)
+            }
+            onDismiss { app.warmUpVoice() }
         }.show()
     }
 

@@ -25,6 +25,7 @@ import app.voicereader.korean.PronunciationDictionary
 import app.voicereader.korean.ReadingOptions
 import app.voicereader.korean.applyReadingOptions
 import app.voicereader.korean.splitDialogue
+import java.io.DataInputStream
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -37,9 +38,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import org.readium.navigator.media.tts.AndroidTtsNavigator
 import org.readium.navigator.media.tts.TtsNavigator
@@ -100,6 +103,24 @@ class Book(
     val path: String? = null,
 )
 
+/** Names of a Supertonic release's built-in voices, by speaker id (voice_styles/F1..F5, M1..M5, sorted). */
+private val BUILT_IN_VOICES = (1..5).map { "여성 $it" } + (1..5).map { "남성 $it" }
+
+private const val PREVIEW_SENTENCE = "안녕하세요. 이 목소리로 책을 읽어 드릴게요."
+
+/** Every number in a (nested) JSON array, flattened: style tensors are stored as [1][50][256]. */
+private fun floats(array: JSONArray): FloatArray {
+    val out = ArrayList<Float>()
+    fun walk(a: JSONArray) {
+        for (i in 0 until a.length()) {
+            val v = a.get(i)
+            if (v is JSONArray) walk(v) else out += (v as Number).toFloat()
+        }
+    }
+    walk(array)
+    return out.toFloatArray()
+}
+
 /** A user-made group of books (책장). A book can sit on several shelves. */
 class Shelf(val id: String, var name: String, val bookIds: MutableList<String>)
 
@@ -111,11 +132,13 @@ private fun File.readAtomically(): String? =
     try { String(AtomicFile(this).readFully()) } catch (e: FileNotFoundException) { null }
 
 /** A crash mid-write leaves the previous version instead of a truncated file. */
-private fun File.writeAtomically(text: String) {
+private fun File.writeAtomically(text: String) = writeAtomically(text.toByteArray())
+
+private fun File.writeAtomically(bytes: ByteArray) {
     val file = AtomicFile(this)
     val out = file.startWrite()
     try {
-        out.write(text.toByteArray())
+        out.write(bytes)
         file.finishWrite(out)
     } catch (e: Exception) {
         file.failWrite(out)
@@ -441,7 +464,15 @@ class App : Application(), TtsNavigator.Listener {
             prefs.edit().putString("voice", value).apply()
         }
 
-    /** The voice for lines of dialogue in the open book (PRD N-6); null = same as narration. */
+    /** Which voice of the narration pack reads (its speaker id). */
+    val activeSpeaker: Int get() = prefs.getInt("speaker", 0)
+
+    fun setNarrationVoice(pack: String, sid: Int) {
+        stopTts()
+        prefs.edit().putString("voice", pack).putInt("speaker", sid).apply()
+    }
+
+    /** The pack for lines of dialogue in the open book (PRD N-6); null = the narration voice. */
     var dialogueVoice: String?
         get() = book?.let { prefs.getString("dialogueVoice:${it.id}", null) }?.takeIf { File(voicesDir, it).isDirectory }
         set(value) {
@@ -449,15 +480,102 @@ class App : Application(), TtsNavigator.Listener {
             book?.let { prefs.edit().putString("dialogueVoice:${it.id}", value).apply() }
         }
 
+    val dialogueSpeaker: Int get() = book?.let { prefs.getInt("dialogueSpeaker:${it.id}", 0) } ?: 0
+
+    fun setDialogueVoice(pack: String, sid: Int) {
+        stopTts()
+        book?.let { prefs.edit().putString("dialogueVoice:${it.id}", pack).putInt("dialogueSpeaker:${it.id}", sid).apply() }
+    }
+
+    /** Loads (once) the model of [pack]. Blocking. */
+    @Synchronized
+    private fun model(pack: String): Synthesizer = loaded.getOrPut(pack) { Synthesizer(File(voicesDir, pack)) }
+
     /** Loads the voices the open book needs and frees any other model. Null = Android system TTS. Blocking. */
     @Synchronized
     private fun loadSpeakers(): Speakers? {
         val narration = activeVoice ?: return null
         val dialogue = dialogueVoice ?: narration
         (loaded.keys - setOf(narration, dialogue)).forEach { loaded.remove(it)?.release() }
-        fun synthesizer(name: String) = loaded.getOrPut(name) { Synthesizer(File(voicesDir, name)) }
-        return Speakers(synthesizer(narration), synthesizer(dialogue))
+        fun voice(pack: String, sid: Int) = Voice(model(pack), sid.coerceIn(0, voicesOf(pack).size - 1))
+        val narrator = voice(narration, activeSpeaker)
+        return Speakers(narrator, if (dialogueVoice == null) narrator else voice(dialogue, dialogueSpeaker))
     }
+
+    // --- Voices inside a pack: the release's built-in ones, then voice files made elsewhere (Voice Builder, Colab) ---
+
+    private fun customVoices(pack: String): JSONArray =
+        File(voicesDir, "$pack/voices.json").readAtomically()?.let(::JSONArray) ?: JSONArray()
+
+    /** Names of the voices in [pack], by speaker id. */
+    fun voicesOf(pack: String): List<String> {
+        val count = try {
+            DataInputStream(File(voicesDir, "$pack/voice.bin").inputStream()).use { input ->
+                ByteArray(48).also { input.readFully(it) }.let { readVoiceBinHeader(it).count }
+            }
+        } catch (e: Exception) {
+            1
+        }
+        val custom = customVoices(pack)
+        val builtIn = count - custom.length()
+        return List(builtIn) { if (builtIn == BUILT_IN_VOICES.size) BUILT_IN_VOICES[it] else "목소리 ${it + 1}" } +
+            List(custom.length()) { custom.getJSONObject(it).getString("name") }
+    }
+
+    /** "여성 1", or "기기 음성" for the Android system voice. */
+    val narrationVoiceName: String
+        get() = activeVoice?.let { voicesOf(it).getOrNull(activeSpeaker) } ?: "기기 음성"
+
+    val dialogueVoiceName: String?
+        get() = dialogueVoice?.let { pack -> "${voicesOf(pack).getOrNull(dialogueSpeaker)} · ${voiceLabel(pack)}" }
+
+    private var previewJob: Job? = null
+
+    /** Says a short sentence in voice [sid] of [pack], so the listener can hear it before reading with it. */
+    fun previewVoice(pack: String, sid: Int) {
+        previewJob?.cancel()
+        previewJob = scope.launch(Dispatchers.IO) {
+            val audio = runCatching { model(pack).take(PREVIEW_SENTENCE, "ko", speed.toFloat(), sid).get() }.getOrNull()
+            if (audio != null && isActive) playBlocking(audio) { isActive }
+        }
+    }
+
+    /**
+     * Adds a voice made elsewhere (a Supertonic style JSON from Voice Builder or a Colab notebook) to [pack], after the
+     * user confirmed it is their own voice or used with consent. Returns an error, or null.
+     */
+    suspend fun importVoiceStyle(uri: Uri, pack: String): String? {
+        val name = displayName(uri)?.substringBeforeLast('.')?.takeIf { it.isNotBlank() } ?: "내 목소리"
+        stopTts() // the model is reloaded below with the new voice
+        val error = withContext(Dispatchers.IO) {
+            try {
+                val text = contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() }
+                    ?: return@withContext "파일을 읽을 수 없어요"
+                val json = JSONObject(text)
+                val ttl = floats(json.getJSONObject("style_ttl").getJSONArray("data"))
+                val dp = floats(json.getJSONObject("style_dp").getJSONArray("data"))
+                val bin = File(voicesDir, "$pack/voice.bin")
+                bin.writeAtomically(appendVoice(bin.readBytes(), ttl, dp))
+                val custom = customVoices(pack).put(
+                    JSONObject().put("name", name).put("consentConfirmed", true).put("importedAt", System.currentTimeMillis()),
+                )
+                File(voicesDir, "$pack/voices.json").writeAtomically(custom.toString())
+                null
+            } catch (e: JSONException) {
+                "Supertonic 목소리 파일(JSON)이 아니에요"
+            } catch (e: IllegalArgumentException) {
+                "이 음성 팩과 맞지 않는 목소리 파일이에요: ${e.message}"
+            } catch (e: IOException) {
+                "파일을 읽을 수 없어요: ${e.message}"
+            }
+        }
+        if (error == null) withContext(Dispatchers.IO) { synchronized(this@App) { loaded.remove(pack)?.release() } }
+        return error
+    }
+
+    private fun displayName(uri: Uri): String? =
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { if (it.moveToFirst()) it.getString(0) else null }
 
     /** Loads the models while the reader opens, so pressing play doesn't wait for them. */
     fun warmUpVoice() {
@@ -483,11 +601,18 @@ class App : Application(), TtsNavigator.Listener {
 
     private fun prefetch(speakers: Speakers, paragraph: String, ranges: List<IntRange>, language: Language?) {
         val texts = ranges.map { paragraph.substring(it) }.filter { text -> text.any { it.isLetterOrDigit() } } // as Readium
-        val (dialogue, narration) = texts.partition { speakers.of(it) !== speakers.narration }
-        fun Synthesizer.queue(texts: List<String>) =
-            prefetch(texts.map { speakable(it, language) }, supertonicLanguage(language), speed.toFloat())
-        speakers.narration.queue(narration)
-        if (speakers.mixed) speakers.dialogue.queue(dialogue)
+        // One queue per model, in reading order: narration and dialogue may be two voices of the same pack.
+        texts.groupBy { speakers.of(it).synthesizer }.forEach { (synthesizer, texts) ->
+            synthesizer.prefetch(
+                texts.map { speakable(it, language) to speakers.of(it).sid },
+                supertonicLanguage(language),
+                speed.toFloat(),
+            )
+        }
+        // A model with nothing in this paragraph still drops its stale look-ahead.
+        setOf(speakers.narration.synthesizer, speakers.dialogue.synthesizer)
+            .filter { s -> texts.none { speakers.of(it).synthesizer === s } }
+            .forEach { it.prefetch(emptyList(), supertonicLanguage(language), speed.toFloat()) }
     }
 
     /**
@@ -495,8 +620,7 @@ class App : Application(), TtsNavigator.Listener {
      * Files are flattened, which also keeps "../" entries from escaping the pack folder. Returns an error, or null.
      */
     suspend fun importVoicePack(uri: Uri): String? {
-        val displayName = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-            ?.use { if (it.moveToFirst()) it.getString(0) else null }
+        val displayName = displayName(uri)
         val name = (displayName?.substringBeforeLast('.') ?: "voice").replace(Regex("""[^\w가-힣.-]"""), "_")
         val dir = File(voicesDir, name)
         val error = withContext(Dispatchers.IO) {
@@ -520,7 +644,7 @@ class App : Application(), TtsNavigator.Listener {
             )
             null
         }
-        if (error != null) dir.deleteRecursively() else if (activeVoice == null) activeVoice = name // first pack narrates
+        if (error != null) dir.deleteRecursively() else if (activeVoice == null) setNarrationVoice(name, 0) // first pack narrates
         return error
     }
 
@@ -552,6 +676,7 @@ class App : Application(), TtsNavigator.Listener {
 
     suspend fun startTts(start: Locator?) {
         val pub = publication ?: return
+        previewJob?.cancel()
         val speakers = try {
             withContext(Dispatchers.IO) { loadSpeakers() } // usually already warm
         } catch (e: Exception) {

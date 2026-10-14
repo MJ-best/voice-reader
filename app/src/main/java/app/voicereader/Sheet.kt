@@ -142,6 +142,42 @@ class Sheet(private val context: Context, title: String, hint: String? = null) {
         })
     }
 
+    /**
+     * One choice out of a list, as rows with a check on the chosen one. Unlike [row] it leaves the sheet open, so the
+     * listener can try several (e.g. hear each voice) before closing it.
+     */
+    fun pick(labels: List<String>, selected: Int, onPick: (Int) -> Unit): Sheet = apply {
+        val checks = labels.indices.map { i ->
+            ImageView(context).apply {
+                setImageResource(R.drawable.ic_check)
+                imageTintList = context.getColorStateList(R.color.row_fg)
+                isDuplicateParentStateEnabled = true
+                visibility = if (i == selected) View.VISIBLE else View.INVISIBLE
+                contentDescription = "선택됨"
+                layoutParams = LinearLayout.LayoutParams(context.dp(28), context.dp(28))
+            }
+        }
+        labels.forEachIndexed { i, label ->
+            column.addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = context.dp(60)
+                setPadding(context.dp(16), context.dp(8), context.dp(16), context.dp(8))
+                setBackgroundResource(R.drawable.row_bg)
+                setOnClickListener {
+                    checks.forEachIndexed { j, check -> check.visibility = if (j == i) View.VISIBLE else View.INVISIBLE }
+                    onPick(i)
+                }
+                addView(text(label, R.style.Text_Body).apply {
+                    setTextColor(context.getColorStateList(R.color.row_fg))
+                    isDuplicateParentStateEnabled = true
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                addView(checks[i])
+            })
+        }
+    }
+
     fun onDismiss(block: () -> Unit): Sheet = apply { dialog.setOnDismissListener { block() } }
 
     /** A small heading with a rule above it, to group what follows. */

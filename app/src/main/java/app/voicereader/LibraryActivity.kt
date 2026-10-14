@@ -73,6 +73,10 @@ class LibraryActivity : AppCompatActivity() {
     /** Set while the user is in system settings granting file access; checked when they come back. */
     private var askedForAllFiles = false
 
+    private val pickVoiceStyle = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) importVoiceStyle(uri)
+    }
+
     private val pickVoicePack = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) lifecycleScope.launch {
             toast("음성 팩을 설치하는 중…")
@@ -311,6 +315,7 @@ class LibraryActivity : AppCompatActivity() {
             .show()
     }
 
+    /** The narration voice for every book: the system TTS, or a voice of an installed pack. */
     private fun showVoices() {
         Sheet(this, "낭독 음성", "모든 책의 서술에 쓰는 목소리예요. 대화문 목소리는 책을 연 뒤 설정 → 낭독에서 따로 고를 수 있어요.").apply {
             row("기기 기본 음성", "Android TTS", icon = R.drawable.ic_voice, checked = app.activeVoice == null) {
@@ -318,26 +323,60 @@ class LibraryActivity : AppCompatActivity() {
                 refresh()
             }
             app.voicePacks().forEach { pack ->
-                row(voiceLabel(pack), "음성 팩", icon = R.drawable.ic_headphones, checked = pack == app.activeVoice) {
-                    app.activeVoice = pack
-                    refresh()
-                }
+                val current = pack == app.activeVoice
+                row(
+                    voiceLabel(pack),
+                    if (current) "지금: ${app.narrationVoiceName}" else "목소리 ${app.voicesOf(pack).size}개",
+                    icon = R.drawable.ic_headphones,
+                    checked = current,
+                ) { pickNarrationVoice(pack) }
             }
-            button("음성 팩 가져오기") { confirmVoiceConsent() }
+            button("음성 팩 가져오기 (zip)") { confirmConsent { pickVoicePack.launch(arrayOf("application/zip", "application/octet-stream")) } }
+            button("목소리 파일 가져오기 (JSON)") {
+                confirmConsent { pickVoiceStyle.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
+            }
         }.show()
     }
 
+    /** The voices of [pack]; each tap selects it and says a sentence in it. */
+    private fun pickNarrationVoice(pack: String) {
+        val selected = if (app.activeVoice == pack) app.activeSpeaker else -1
+        Sheet(this, voiceLabel(pack), "누르면 그 목소리로 고르고 들려 드려요").apply {
+            pick(app.voicesOf(pack), selected) { sid ->
+                app.setNarrationVoice(pack, sid)
+                app.previewVoice(pack, sid)
+            }
+            onDismiss { refresh() }
+        }.show()
+    }
+
+    /** A voice file made elsewhere goes into one installed pack: the one whose model version made it. */
+    private fun importVoiceStyle(uri: Uri) {
+        val packs = app.voicePacks()
+        fun into(pack: String) = lifecycleScope.launch {
+            val error = app.importVoiceStyle(uri, pack)
+            if (error != null) return@launch toast(error)
+            toast("목소리를 넣었어요. 목록 맨 아래에 있어요.")
+            pickNarrationVoice(pack)
+        }
+        when (packs.size) {
+            0 -> toast("목소리 파일을 넣을 Supertonic 음성 팩을 먼저 가져와 주세요")
+            1 -> into(packs.single())
+            else -> Sheet(this, "어느 음성 팩에 넣을까요?", "목소리 파일을 만든 모델 버전과 같은 음성 팩을 고르세요 (예: Supertonic 2용 파일은 Supertonic 2에).").apply {
+                packs.forEach { pack -> row(voiceLabel(pack), "목소리 ${app.voicesOf(pack).size}개", icon = R.drawable.ic_headphones) { into(pack) } }
+            }.show()
+        }
+    }
+
     // PRD ethics rule: only voices that are the user's own or used with the speaker's explicit consent.
-    private fun confirmVoiceConsent() {
+    private fun confirmConsent(then: () -> Unit) {
         MaterialAlertDialogBuilder(this)
             .setTitle("목소리 사용 동의")
             .setMessage(
                 "본인의 목소리이거나, 화자에게 이 앱에서 쓰는 것에 대해 명시적인 동의를 받은 목소리만 가져올 수 있어요.\n\n" +
-                    "실존 인물(성우·배우·가수 등)의 목소리를 동의 없이 복제한 음성 팩은 가져오지 마세요.",
+                    "실존 인물(성우·배우·가수 등)의 목소리를 동의 없이 복제한 음성 팩이나 목소리 파일은 가져오지 마세요.",
             )
-            .setPositiveButton("동의하고 zip 선택") { _, _ ->
-                pickVoicePack.launch(arrayOf("application/zip", "application/octet-stream"))
-            }
+            .setPositiveButton("동의하고 파일 고르기") { _, _ -> then() }
             .setNegativeButton("취소", null)
             .show()
     }
@@ -409,7 +448,7 @@ class LibraryActivity : AppCompatActivity() {
                 ?: if (books.isEmpty()) "" else "${books.size}권"
             view.findViewById<View>(R.id.actions).isVisible = books.isNotEmpty() // the empty state has its own buttons
             view.findViewById<MaterialButton>(R.id.voice).apply {
-                text = app.activeVoice?.let(::voiceLabel) ?: "기기 음성"
+                text = app.narrationVoiceName
                 setOnClickListener { showVoices() }
             }
             view.findViewById<View>(R.id.add).setOnClickListener { showAddSheet() }

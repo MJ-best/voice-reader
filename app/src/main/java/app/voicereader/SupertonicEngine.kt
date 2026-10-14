@@ -40,7 +40,6 @@ import org.readium.r2.shared.util.Error
 import org.readium.r2.shared.util.Language
 import org.readium.r2.shared.util.Try
 
-private const val SPEAKER = 0 // 0..4 = F1..F5, 5..9 = M1..M5. ponytail: fixed until there is a voice picker.
 private const val STEPS = 8 // what the listening test used; drop to 4–5 if a phone can't keep up.
 private val LANGUAGES = setOf("ko", "en", "es", "pt", "fr") // Supertonic 2
 private const val SILENCE = 0.01f // ≈ -40 dBFS
@@ -67,7 +66,7 @@ fun supertonicLanguage(language: Language?): String =
  */
 class Synthesizer(private val dir: File) {
 
-    private data class Key(val text: String, val language: String, val speed: Float)
+    private data class Key(val text: String, val language: String, val speed: Float, val sid: Int)
 
     private val tts = OfflineTts(
         config = OfflineTtsConfig(
@@ -106,17 +105,17 @@ class Synthesizer(private val dir: File) {
      * except sentences the player already asked for: Readium can load the next paragraph before reading the last
      * sentence of the current one.
      */
-    fun prefetch(texts: List<String>, language: String, speed: Float) = lock.withLock {
+    fun prefetch(texts: List<Pair<String, Int>>, language: String, speed: Float) = lock.withLock {
         wanted.retainAll { it in claimed }
-        texts.map { Key(it, language, speed) }
+        texts.map { (text, sid) -> Key(text, language, speed, sid) }
             .filter { results[it]?.isDone != true && it != generating && it !in wanted }
             .forEach { wanted.addLast(it) }
         changed.signal()
     }
 
-    /** The audio for the sentence about to be read; jumps the queue if it isn't ready yet. */
-    fun take(text: String, language: String, speed: Float): Future<GeneratedAudio> = lock.withLock {
-        val key = Key(text, language, speed)
+    /** The audio for the sentence about to be read, in voice [sid]; jumps the queue if it isn't ready yet. */
+    fun take(text: String, language: String, speed: Float, sid: Int): Future<GeneratedAudio> = lock.withLock {
+        val key = Key(text, language, speed, sid)
         val audio = results.getOrPut(key) { CompletableFuture() }
         Log.i("Supertonic", if (audio.isDone) "ready" else "waiting") // "waiting" = an audible gap before this sentence
         if (!audio.isDone) {
@@ -157,10 +156,10 @@ class Synthesizer(private val dir: File) {
         val started = SystemClock.elapsedRealtime()
         val audio = tts.generateWithConfig(
             key.text,
-            GenerationConfig(sid = SPEAKER, speed = key.speed, numSteps = STEPS, extra = mapOf("lang" to key.language)),
+            GenerationConfig(sid = key.sid, speed = key.speed, numSteps = STEPS, extra = mapOf("lang" to key.language)),
         )
         val seconds = audio.samples.size.toDouble() / audio.sampleRate
-        Log.i("Supertonic", "${dir.name} rtf=%.3f (%.1fs audio)".format((SystemClock.elapsedRealtime() - started) / 1000.0 / seconds, seconds))
+        Log.i("Supertonic", "${dir.name} sid=${key.sid} rtf=%.3f (%.1fs audio)".format((SystemClock.elapsedRealtime() - started) / 1000.0 / seconds, seconds))
         return trimmed(audio)
     }
 
@@ -193,11 +192,48 @@ class Synthesizer(private val dir: File) {
     }
 }
 
-/** Who reads what: narration, and lines of dialogue (PRD N-6). The same synthesizer unless the book mixes voices. */
-class Speakers(val narration: Synthesizer, val dialogue: Synthesizer) {
-    val mixed: Boolean get() = narration !== dialogue
+/** One voice of a loaded pack: its synthesizer and speaker id (built-in F1..F5, M1..M5, then imported ones). */
+data class Voice(val synthesizer: Synthesizer, val sid: Int)
 
-    fun of(text: String): Synthesizer = if (mixed && isDialogue(text)) dialogue else narration
+/** Who reads what: narration, and lines of dialogue (PRD N-6). The same voice unless the book mixes voices. */
+class Speakers(val narration: Voice, val dialogue: Voice) {
+    val mixed: Boolean get() = narration != dialogue
+
+    fun of(text: String): Voice = if (mixed && isDialogue(text)) dialogue else narration
+}
+
+/** Plays [audio] to the end on the calling thread, unless [keepGoing] turns false. Returns whether it finished. */
+fun playBlocking(audio: GeneratedAudio, keepGoing: () -> Boolean): Boolean {
+    val samples = audio.samples
+    if (samples.isEmpty()) return true
+    val track = AudioTrack.Builder()
+        .setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build(),
+        )
+        .setAudioFormat(
+            AudioFormat.Builder()
+                .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+                .setSampleRate(audio.sampleRate)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                .build(),
+        )
+        .setTransferMode(AudioTrack.MODE_STATIC)
+        .setBufferSizeInBytes(samples.size * 4)
+        .build()
+    try {
+        track.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
+        track.play()
+        while (track.playbackHeadPosition < samples.size) {
+            if (!keepGoing()) return false
+            Thread.sleep(20)
+        }
+        return true
+    } finally {
+        track.release()
+    }
 }
 
 /**
@@ -254,10 +290,12 @@ private class SupertonicEngine(
 
     override fun speak(requestId: TtsEngine.RequestId, text: String, language: Language?) {
         current = requestId
-        val audio = speakers.of(text).take(
+        val voice = speakers.of(text)
+        val audio = voice.synthesizer.take(
             text,
             supertonicLanguage(language ?: settings.value.language),
             settings.value.speed.toFloat(),
+            voice.sid,
         )
         player.execute {
             val finished = runCatching { play(requestId, audio) }
@@ -286,36 +324,7 @@ private class SupertonicEngine(
                 // still synthesizing
             }
         }
-        val samples = audio.samples
-        if (samples.isEmpty()) return true
-
-        val track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build(),
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                    .setSampleRate(audio.sampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build(),
-            )
-            .setTransferMode(AudioTrack.MODE_STATIC)
-            .setBufferSizeInBytes(samples.size * 4)
-            .build()
-        try {
-            track.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
-            track.play()
-            while (track.playbackHeadPosition < samples.size) {
-                if (current != id) return false
-                Thread.sleep(20)
-            }
-        } finally {
-            track.release()
-        }
+        if (!playBlocking(audio) { current == id }) return false
         // The pause between sentences: waited here rather than baked into the audio, so changing it needs no resynthesis.
         val pauseEnds = SystemClock.elapsedRealtime() + pauseMs()
         while (SystemClock.elapsedRealtime() < pauseEnds) {
