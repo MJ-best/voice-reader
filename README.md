@@ -6,6 +6,20 @@
 
 > 상태: 개발 초기. 에뮬레이터(Android 16)에서 동작을 확인했고, 실제 e-ink 기기에서는 아직 시험하지 않았습니다.
 
+![보이스 리더: 서재, 대사 낭독, 책장, 읽기 옵션](docs/screenshots/hero.png)
+
+## 화면
+
+| 서재와 이어 듣기 | 책장으로 묶기 | 전체 보기 |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/library.png" width="240" alt="서재: 이어 듣기 카드와 읽는 중 책장"> | <img src="docs/screenshots/shelves.png" width="240" alt="소설, 에세이·묵상 책장"> | <img src="docs/screenshots/all-books.png" width="240" alt="표지 그리드와 진행률"> |
+| **낭독 중** — 대사는 Supertonic 3, 지문은 Supertonic 2 | **단어를 길게 눌러** 발음 고치기 | **발음 추가** — 이 책만 / 모든 책 |
+| <img src="docs/screenshots/reading.png" width="240" alt="대사에 하이라이트가 잡힌 낭독 화면"> | <img src="docs/screenshots/fix-select.png" width="240" alt="텍스트 선택 메뉴의 발음 고치기"> | <img src="docs/screenshots/fix-dialog.png" width="240" alt="발음 추가 창"> |
+| **설정** — 네 갈래로 나눠 스크롤 없이 | **보기** — 테마·글꼴, 크기는 −/+ | **읽기 옵션** — 켬 \| 끔 |
+| <img src="docs/screenshots/settings.png" width="240" alt="설정 시트"> | <img src="docs/screenshots/display.png" width="240" alt="보기 설정 시트"> | <img src="docs/screenshots/reading-options.png" width="240" alt="읽기 옵션 시트"> |
+
+<sub>스크린샷의 책과 표지는 데모용으로 직접 만든 것입니다. 선택한 항목은 검게 채워지고, 누르는 순간 반전되어 흑백 e-ink 화면에서도 분명하게 보입니다.</sub>
+
 ## 할 수 있는 것
 
 **서재**
@@ -51,6 +65,8 @@ cd sherpa-onnx-supertonic-tts-int8-2026-03-06 && zip ../supertonic-2.zip *.onnx 
 
 Supertonic 3은 `sherpa-onnx-supertonic-3-tts-int8-2026-05-11`을 같은 방법으로 묶습니다.
 만든 zip을 기기에 옮긴 뒤, 서재 위쪽의 음성 버튼(지금 쓰는 음성 이름이 적힌 버튼) → **음성 팩 가져오기**로 설치합니다. zip 파일 이름이 음성 이름이 됩니다.
+
+<img src="docs/screenshots/voices.png" width="240" alt="낭독 음성 고르기와 음성 팩 가져오기">
 
 어떤 모델을 왜 골랐는지는 [spike/RESULTS.md](spike/RESULTS.md)에 정리했습니다(Supertonic 2·3, MMS, Mimic3 비교).
 
