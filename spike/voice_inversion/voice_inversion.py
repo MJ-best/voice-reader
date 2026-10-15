@@ -7,6 +7,7 @@
 높았던 시점을 고른다. ECAPA만 오래 올리면 화자에 따라 소리가 무너진다(README 참고).
 
     fit   대상 녹음 → <name>.nearest.json, <name>.blend.json, <name>.invert.json (Supertonic 스타일 JSON)
+    mix   만든 스타일을 약하게: 시작점(프리셋/혼합)에서 일부만 옮긴 JSON (어눌하게 들릴 때)
     pack  스타일 JSON → sherpa-onnx generate_voices_bin.py로 voice.bin → 앱 음성 팩 zip
     eval  음성 팩을 sherpa-onnx(int8, 앱과 같은 경로)로 sid 합성 → 화자 유사도(WeSpeaker, WavLM-SV, ECAPA), CER
 
@@ -379,12 +380,38 @@ def fit(a):
     log["delta_rms_in_preset_std"] = float(final.pow(2).mean().sqrt())
     write_style(out / f"{a.name}.invert.json", base_ttl + final * spread, base_dp, method="invert", init=a.init,
                 iters=a.iters, selected_iter=log["selected_iter"], lr=a.lr, reg=a.reg, fit_steps=a.fit_steps,
-                objective=a.objective, ref_seconds=log["seconds"])
+                objective=a.objective, ref_seconds=log["seconds"], model=a.model)
     log["time_invert"] = time.time() - t0
     log["gpu_gb"] = round(mem, 2)
     log["args"] = vars(a)
     (out / f"{a.name}.fit.json").write_text(json.dumps(log, ensure_ascii=False, indent=1))
     print(json.dumps({k: v for k, v in log.items() if k not in ("invert_curve", "args")}, ensure_ascii=False))
+
+
+def mix(a):
+    """A milder voice: from the start style only part of the way to the fitted one. The further an inverted style
+    drifts from the presets, the closer the speaker metrics say it sounds, yet speech can turn slurred (README)."""
+    style = Path(a.style)
+    meta = json.loads(style.read_text()).get("metadata", {})
+    base = a.base or meta.get("init")
+    if base in ("blend", "nearest"):  # fit wrote it next to the invert
+        base = style.with_name(style.name.replace(".invert.json", f".{base}.json"))
+    elif base in PRESETS:
+        model = a.model or meta.get("model")
+        if not model:
+            sys.exit("시작점이 프리셋이면 --model을 주세요 (fit에 쓴 모델과 같게)")
+        base = hf_model(model) / f"voice_styles/{base}.json"
+    if not base or not Path(base).is_file():
+        sys.exit("--base에 시작점을 주세요: 프리셋 이름(F1~M5) 또는 스타일 JSON")
+    (b_ttl, b_dp), (t_ttl, t_dp) = read_style(base), read_style(style)
+    out = Path(a.out) if a.out else style.parent
+    out.mkdir(parents=True, exist_ok=True)
+    for pct in a.percent:
+        k = pct / 100
+        path = out / style.name.replace(".json", f".{pct}.json")
+        write_style(path, b_ttl + k * (t_ttl - b_ttl), b_dp + k * (t_dp - b_dp),
+                    **{**meta, "method": f"{meta.get('method', 'style')} {pct}%", "base": Path(base).name})
+        print(path)
 
 
 def pack(a):
@@ -506,6 +533,12 @@ def main():
     f.add_argument("--select", default="best", choices=["last", "best"],
                    help="best: 25회마다 검증 문장으로 잰 유사도가 가장 높았던 시점(0회 = 시작점 포함)을 쓴다")
     f.add_argument("--checkpoint", action="store_true", help="flow 스텝마다 activation checkpointing (GPU 메모리가 모자랄 때)")
+    m = sub.add_parser("mix")
+    m.add_argument("style", help="fit이 만든 <name>.invert.json")
+    m.add_argument("--percent", type=int, nargs="+", default=[25, 50, 75], help="시작점에서 만든 목소리 쪽으로 옮길 비율(%%)")
+    m.add_argument("--base", help="시작점: 프리셋 이름(F1~M5) 또는 스타일 JSON. 없으면 fit의 --init(혼합이면 옆의 blend JSON)")
+    m.add_argument("--model", choices=list(SHERPA), help="시작점이 프리셋일 때 모델. 없으면 JSON에 적힌 모델")
+    m.add_argument("--out", help="결과 폴더 (기본: style과 같은 폴더)")
     k = sub.add_parser("pack")
     k.add_argument("styles", nargs="+")
     k.add_argument("--model", default="supertonic-3", choices=list(SHERPA))
@@ -518,7 +551,7 @@ def main():
     e.add_argument("--steps", type=int, default=8)
     e.add_argument("--out", default=str(CACHE / "eval"))
     a = p.parse_args()
-    {"fit": fit, "pack": pack, "eval": evaluate}[a.cmd](a)
+    {"fit": fit, "mix": mix, "pack": pack, "eval": evaluate}[a.cmd](a)
 
 
 if __name__ == "__main__":
