@@ -274,12 +274,22 @@ def load_wav(path, seconds=None, offset=0.0):
     return torch.from_numpy(w[: int(seconds * sr)] if seconds else w), sr
 
 
+def load_refs(paths, seconds=None):
+    """Several takes joined into one 44.1 kHz mono recording, 0.3 s of silence between files (as colab.ipynb does)."""
+    parts = []
+    for p in paths:
+        w, sr = load_wav(p)
+        parts += [AF.resample(w, sr, SR), torch.zeros(int(SR * 0.3))]
+    w = torch.cat(parts[:-1])
+    return (w[: int(seconds * SR)] if seconds else w), SR
+
+
 def fit(a):
     dev = device()
     torch.manual_seed(0)
     random.seed(0)
     st = Supertonic(a.model, dev)
-    wav, sr = load_wav(a.ref, a.seconds)
+    wav, sr = load_refs(a.ref, a.seconds)
     # 최적화 지표(들)와 검증 지표. 검증 지표는 경사에 안 쓰고 기록하거나(--select last) 가장 좋은 시점을 고르는 데만 쓴다
     # (--select best). 검증이 같이 오르지 않으면 최적화 지표만 속인 것.
     encs = [Ecapa(dev)] + ([WavLMSV(dev)] if a.objective == "ecapa+wavlm" else [])
@@ -296,7 +306,7 @@ def fit(a):
     probe = texts[:3] + [t for t in texts if t[1] != "ko"][:2]
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    log = {"ref": str(a.ref), "seconds": len(wav) / sr, "model": a.model, "device": dev, "objective": a.objective}
+    log = {"ref": [str(p) for p in a.ref], "seconds": len(wav) / sr, "model": a.model, "device": dev, "objective": a.objective}
 
     def sim(ttl, dp, items, steps, seed=0, grad=False):
         with torch.set_grad_enabled(grad):
@@ -430,12 +440,12 @@ def evaluate(a):
         return {k: round(float(np.mean([r[k] for r in rows])), 4) for k in rows[0]}
 
     # (이름, 언어, Voice Builder 결과가 읽은 문장, 녹음, Voice Builder 결과). --ref면 사용자 녹음 하나만 본다.
-    targets = [(a.name, "ko", None, Path(a.ref), None)] if a.ref else [
+    targets = [(a.name, "ko", None, a.ref, None)] if a.ref else [
         (t, *TARGETS[t], hf / f"audio_samples/{t}_reference.wav", hf / f"audio_samples/{t}_supertonic3.wav")
         for t in a.targets]
     rows = {}
     for target, lang, same_text, ref_path, vb_path in targets:
-        ref_w, ref_sr = load_wav(ref_path)
+        ref_w, ref_sr = load_refs(ref_path) if isinstance(ref_path, list) else load_wav(ref_path)
         ref = emb(ref_w, ref_sr)
         r = rows[target] = {}
         half = len(ref_w) // 2  # 상한 참고: 같은 녹음의 앞·뒤 절반끼리
@@ -472,7 +482,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     f = sub.add_parser("fit")
-    f.add_argument("--ref", required=True, help="대상 화자 녹음 wav (모노/스테레오, 아무 샘플레이트)")
+    f.add_argument("--ref", required=True, nargs="+", help="대상 화자 녹음 wav 하나 이상 (모노/스테레오, 아무 샘플레이트). 여러 개면 이어 붙인다")
     f.add_argument("--name", required=True)
     f.add_argument("--lang", default="ko", help="녹음 언어 (ko, en). 최적화 문장에 섞는다")
     f.add_argument("--model", default="supertonic-3", choices=list(SHERPA))
@@ -498,7 +508,7 @@ def main():
     e = sub.add_parser("eval")
     e.add_argument("pack")
     e.add_argument("--targets", nargs="+", default=["luna"], help="HF audio_samples 화자 (luna alphonse keld nora)")
-    e.add_argument("--ref", help="대신 이 녹음과 비교한다 (사용자 녹음). --name과 같이")
+    e.add_argument("--ref", nargs="+", help="대신 이 녹음(들)과 비교한다 (사용자 녹음, fit과 같은 파일). --name과 같이")
     e.add_argument("--name", help="--ref의 이름. pack에 넣은 스타일 파일 이름에 _<name>. 이 들어 있어야 한다")
     e.add_argument("--steps", type=int, default=8)
     e.add_argument("--out", default=str(CACHE / "eval"))

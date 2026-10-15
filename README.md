@@ -127,6 +127,8 @@ Supertonic Voice Builder 등에서 만든 목소리 파일(`style_ttl`·`style_d
 **목소리** 버튼 → **직접 만든 목소리 넣기** → 넣을 음성 팩을 고르면, 그 팩의 목록 맨 끝에 파일 이름으로 추가됩니다.
 목소리 파일은 만든 모델 버전과 같은 팩에 넣어야 합니다(Supertonic 2용은 Supertonic 2에).
 
+**내 목소리로 듣기:** 1분 남짓 녹음해 내 컴퓨터에서 목소리 파일을 만드는 방법(녹음 대본 포함)은 [docs/my-voice.md](docs/my-voice.md)에 있습니다. 유료 서비스 없이, 녹음이 컴퓨터 밖으로 나가지 않습니다.
+
 어떤 모델을 왜 골랐는지는 [spike/RESULTS.md](spike/RESULTS.md)에 정리했습니다(Supertonic 2·3, MMS, Mimic3 비교).
 
 ## 빌드
