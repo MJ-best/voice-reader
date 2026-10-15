@@ -7,3 +7,7 @@ local.properties
 spike/out/
 dist/
 __pycache__/
+
+# 내 목소리 만들기(docs/my-voice.md): 녹음과 목소리 파일은 개인 자료라 저장소에 올리지 않는다
+my-voice/
+.venv-voice/
