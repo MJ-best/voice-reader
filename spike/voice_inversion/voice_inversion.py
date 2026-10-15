@@ -347,7 +347,10 @@ def fit(a):
 
     # (c) 역추정: style_ttl 전체를 학습. 프리셋 사이 퍼짐(원소별 표준편차)으로 잰 거리에 L2 벌점.
     t0 = time.time()
-    base_ttl, base_dp = (st.ttl[best:best + 1], st.dps[best:best + 1]) if a.init == "nearest" else (blend_ttl, blend_dp)
+    # A preset named with --init: the one eval found closest. ECAPA's own pick (nearest) often isn't (README).
+    start = PRESETS.index(a.init) if a.init in PRESETS else best if a.init == "nearest" else None
+    base_ttl, base_dp = (st.ttl[start:start + 1], st.dps[start:start + 1]) if start is not None else (blend_ttl, blend_dp)
+    log["init"] = a.init
     spread = st.ttl.std(0, keepdim=True)
     delta = torch.zeros_like(base_ttl, requires_grad=True)
     opt = torch.optim.Adam([delta], lr=a.lr)
@@ -488,7 +491,9 @@ def main():
     f.add_argument("--model", default="supertonic-3", choices=list(SHERPA))
     f.add_argument("--seconds", type=float, help="녹음 앞에서 이만큼만 쓴다")
     f.add_argument("--out", default=str(CACHE / "styles"))
-    f.add_argument("--init", default="blend", choices=["nearest", "blend"])
+    f.add_argument("--init", default="blend", choices=["nearest", "blend", *PRESETS],
+                   help="역추정 시작점: blend(혼합), nearest(ECAPA가 고른 프리셋), 또는 프리셋 이름(F1~M5). "
+                        "eval에서 내 녹음과 가장 비슷했던 프리셋을 주면 좋다")
     f.add_argument("--iters", type=int, default=200)
     f.add_argument("--blend-iters", type=int, default=40)
     f.add_argument("--lr", type=float, default=0.05)

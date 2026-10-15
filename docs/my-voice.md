@@ -149,7 +149,8 @@ python spike/voice_inversion/voice_inversion.py eval my-voice/me-supertonic-2.zi
 - **점수 보기:** 화면에 목소리마다 점수가 나옵니다.
   - `wespeaker`·`wavlm`: 내 녹음과 얼마나 비슷한지(클수록 비슷)
   - `ko_cer`: 받아쓰기 오류율(발음이 뭉개졌는지, 작을수록 좋음)
-- **고르는 기준:** invert의 `ko_cer`이 0.1을 넘거나, `wespeaker`가 기본 목소리(F1~M5) 중 가장 높은 것보다 낮으면 invert 대신 blend를 쓰세요. 숫자보다 귀로 들어 보고 고르는 것이 먼저입니다.
+- **고르는 기준:** invert의 `ko_cer`이 0.1 이하이고, `wespeaker`가 기본 목소리(F1~M5) 중 가장 높은 것보다 높으면 invert를 씁니다. 숫자보다 귀로 들어 보고 고르는 것이 먼저입니다.
+- **기본 목소리보다 덜 비슷하면 다시 만들기:** 다듬기를 시작한 지점이 빗나간 경우가 많습니다. 점수표에서 `wespeaker`가 높으면서 `ko_cer`이 0.1 이하인 기본 목소리(예: `M1`)를 골라, 4번 명령에 `--init M1`을 붙여 다시 만드세요. 실제 녹음 하나에서 이렇게 해서 invert의 `wespeaker`가 0.66에서 0.82로 올랐습니다.
 
 ## 6. 앱에 넣기
 
