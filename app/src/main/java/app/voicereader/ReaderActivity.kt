@@ -233,7 +233,7 @@ class ReaderActivity : AppCompatActivity() {
 
     /** Turns the page for a page key (on key down) and says whether it was one. */
     private fun pageKey(event: AndroidKeyEvent): Boolean {
-        val forward = PAGE_KEYS[event.keyCode] ?: return false
+        val forward = PAGE_KEYS[event.keyCode] ?: volumeKey(event.keyCode) ?: return false
         if (event.action == AndroidKeyEvent.ACTION_DOWN) turnPage(forward)
         return true
     }
@@ -246,6 +246,16 @@ class ReaderActivity : AppCompatActivity() {
         if (amount == 0f) return super.dispatchGenericMotionEvent(event)
         turnPage(amount > 0)
         return true
+    }
+
+    /** Volume down / up as next / previous page, when turned on in 보기 and nothing is being read aloud. */
+    private fun volumeKey(code: Int): Boolean? {
+        if (!app.volumeKeysTurnPages || app.tts.value?.playback?.value?.playWhenReady == true) return null
+        return when (code) {
+            AndroidKeyEvent.KEYCODE_VOLUME_DOWN -> true
+            AndroidKeyEvent.KEYCODE_VOLUME_UP -> false
+            else -> null
+        }
     }
 
     private var lastTurn = 0L
@@ -369,7 +379,8 @@ class ReaderActivity : AppCompatActivity() {
         Sheet(this, "설정").apply {
             row(
                 "보기",
-                "${if (prefs.fontFamily == FontFamily.SANS_SERIF) "고딕" else "명조"} · ${percent(prefs.fontSize ?: 1.0)} · 줄 간격 ${"%.1f".format(prefs.lineHeight ?: 1.6)}",
+                "${if (prefs.fontFamily == FontFamily.SANS_SERIF) "고딕" else "명조"} · ${percent(prefs.fontSize ?: 1.0)} · 줄 간격 ${"%.1f".format(prefs.lineHeight ?: 1.6)}" +
+                    if (app.volumeKeysTurnPages) " · 볼륨 키 넘김" else "",
                 icon = R.drawable.ic_text,
                 more = true,
             ) { showDisplay() }
@@ -415,6 +426,8 @@ class ReaderActivity : AppCompatActivity() {
                 val next = (((prefs.lineHeight ?: 1.6) * 10).roundToInt() + delta).coerceIn(10, 25) / 10.0
                 if (next == prefs.lineHeight) null else "%.1f".format(next).also { update(prefs.copy(lineHeight = next)) }
             }
+            choice("볼륨 키로 페이지 넘기기", "아래 키는 다음 쪽, 위 키는 이전 쪽. 듣는 중에는 소리 크기를 바꿔요",
+                listOf("켬", "끔"), if (app.volumeKeysTurnPages) 0 else 1) { app.volumeKeysTurnPages = it == 0 }
         }.show()
     }
 

@@ -136,14 +136,15 @@ fun Context.toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_
 /** A voice pack the app fetches by itself: sherpa-onnx's Supertonic files on Hugging Face, pinned to a revision. */
 class PackSource(val name: String, val repo: String, val revision: String, val bytes: Long, val note: String)
 
+// Supertonic 3 first: it reads better, and an e-ink reader (tested: 듀로보) keeps up with it. 2 is lighter.
 val DOWNLOADABLE_PACKS = listOf(
     PackSource(
-        "supertonic-2", "csukuangfj2/sherpa-onnx-supertonic-tts-int8-2026-03-06",
-        "5dec5897b86e2b293790eedb5e1f561a3295651f", 96_405_714, "서술에 추천",
+        "supertonic-3", "csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11",
+        "cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4", 145_296_838, "품질 추천",
     ),
     PackSource(
-        "supertonic-3", "csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11",
-        "cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4", 145_296_838, "대사·감정 표현에 추천, 더 느림",
+        "supertonic-2", "csukuangfj2/sherpa-onnx-supertonic-tts-int8-2026-03-06",
+        "5dec5897b86e2b293790eedb5e1f561a3295651f", 96_405_714, "가볍고 빠름, 느린 기기용",
     ),
 )
 
@@ -315,6 +316,11 @@ class App : Application(), TtsNavigator.Listener {
     var showShelves: Boolean
         get() = prefs.getBoolean("showShelves", true)
         set(value) = prefs.edit().putBoolean("showShelves", value).apply()
+
+    /** Volume keys turn pages while reading (while listening they still set the volume). */
+    var volumeKeysTurnPages: Boolean
+        get() = prefs.getBoolean("volumeKeysTurnPages", false)
+        set(value) = prefs.edit().putBoolean("volumeKeysTurnPages", value).apply()
 
     // --- Device scan: every EPUB on the device, read in place ---
 

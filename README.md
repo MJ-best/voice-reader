@@ -14,7 +14,7 @@
 
 1. 기기 브라우저에서 [voice-reader.apk](https://github.com/MJ-best/voice-reader/releases/latest/download/voice-reader.apk)를 받습니다([모든 릴리스](https://github.com/MJ-best/voice-reader/releases)).
 2. 받은 파일을 열어 설치합니다. 처음 한 번은 '출처를 알 수 없는 앱 설치'를 허용해야 합니다.
-3. 앱에서 서재 위쪽 **목소리** 버튼 → **Supertonic 2 받기**로 음성 팩을 받습니다(약 96MB, Wi-Fi 권장).
+3. 앱에서 서재 위쪽 **목소리** 버튼 → **Supertonic 3 받기**로 음성 팩을 받습니다(약 145MB, Wi-Fi 권장). 느린 기기라면 가벼운 Supertonic 2(약 96MB)를 고르세요.
 
 Android 8.0 이상, arm64 기기에서 동작합니다.
 
@@ -56,14 +56,14 @@ Android 8.0 이상, arm64 기기에서 동작합니다.
 - [Readium](https://readium.org/) 기반 본문 표시, 목차, 이어 읽기.
 - 테마(라이트·세피아·다크), 글꼴(명조·고딕), 글자 크기, 줄 간격.
 - 읽거나 들을 때는 본문과 맨 아래 한 줄(장 이름 · 쪽)만 보입니다. 화면 가운데를 누르면 위쪽 바(서재로 · 목차 · 설정)와 아래 재생 바(이전 문장 · 듣기 · 다음 문장)가 나타나고, 페이지를 넘기거나 듣기를 시작하면 다시 숨습니다.
-- 가장자리 탭, 기기의 페이지 버튼과 스크롤 휠(회전 다이얼)로 한 쪽씩 넘깁니다.
+- 가장자리 탭, 기기의 페이지 버튼과 스크롤 휠(회전 다이얼)로 한 쪽씩 넘깁니다. 설정 → 보기에서 켜면 볼륨 키로도 넘깁니다(듣는 중에는 소리 크기 조절).
 
 **낭독**
 - 기기 기본 TTS, 또는 Supertonic 음성 팩([Supertonic](https://huggingface.co/Supertone) · [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), 기기 안에서 합성). 음성 팩은 앱에서 바로 받거나 zip으로 가져옵니다.
 - 읽는 문장 하이라이트와 페이지 자동 넘김, 백그라운드 재생, 잠금화면·이어폰 버튼, 장 이동.
 - 다음 문장을 미리 합성해 끊김 없이 이어 읽습니다. 짧은 문장이 이어지면 묶어서 한 번에 읽어, 문장마다 목소리 높이가 튀지 않습니다.
 - 영어로만 된 문장(한국어 책 속 영어 인용문, 언어 정보가 없는 영어책)은 영어로 읽습니다. 영어 단어가 섞인 한국어 문장은 한국어로 읽습니다.
-- 대사 목소리: 따옴표로 시작하는 대사만 다른 음성 팩으로 읽습니다(예: 서술은 Supertonic 2, 대사는 Supertonic 3).
+- 대사 목소리: 따옴표로 시작하는 대사만 다른 목소리로 읽습니다(예: 서술은 여성 1, 대사는 남성 1).
 - 속도, 문장 사이 쉼(짧게·보통·길게).
 
 **한국어 다듬기**
@@ -86,14 +86,14 @@ Android 8.0 이상, arm64 기기에서 동작합니다.
 
 ### 앱에서 받기
 
-서재 위쪽 **목소리** 버튼 → **Supertonic 2 받기** 또는 **Supertonic 3 받기**.
+서재 위쪽 **목소리** 버튼 → **Supertonic 3 받기** 또는 **Supertonic 2 받기**.
 sherpa-onnx가 변환해 [Hugging Face](https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-tts-int8-2026-03-06)에 올린 파일을, 앱에 고정해 둔 버전 그대로 받습니다.
 받는 동안 서재 위쪽에 진행률이 보이고, 중간에 끊기면 다시 누를 때 다 받은 파일은 건너뛰고 이어 받습니다.
 
 | 음성 팩 | 크기 | 어울리는 곳 |
 |---|---|---|
-| Supertonic 2 | 약 96MB | 서술(일반 글). 빠르고 톤이 자연스럽습니다 |
-| Supertonic 3 | 약 145MB | 대사·감정 표현. 합성이 서너 배 느립니다 |
+| Supertonic 3 | 약 145MB | **품질 추천.** 서술과 대사 모두 자연스럽습니다. 흑백 e-ink 기기(듀로보)에서도 끊김 없이 따라 읽었습니다 |
+| Supertonic 2 | 약 96MB | 가볍고 빠릅니다. 느린 기기용. 중간중간 단어를 어눌하게 읽을 수 있습니다 |
 
 <p align="center">
   <img src="docs/screenshots/voice-download.png" width="31%" alt="목소리 시트의 Supertonic 3 받기">
@@ -125,7 +125,7 @@ Supertonic 3은 `sherpa-onnx-supertonic-3-tts-int8-2026-05-11`을 같은 방법�
 
 Supertonic Voice Builder 등에서 만든 목소리 파일(`style_ttl`·`style_dp`가 든 JSON)을 설치된 음성 팩에 덧붙일 수 있습니다.
 **목소리** 버튼 → **직접 만든 목소리 넣기** → 넣을 음성 팩을 고르면, 그 팩의 목록 맨 끝에 파일 이름으로 추가됩니다.
-목소리 파일은 만든 모델 버전과 같은 팩에 넣어야 합니다(Supertonic 2용은 Supertonic 2에).
+목소리 파일은 만든 모델 버전과 같은 팩에 넣어야 합니다(Supertonic 3용은 Supertonic 3에).
 
 **내 목소리로 듣기:** 1분 남짓 녹음해 내 컴퓨터에서 목소리 파일을 만드는 방법(녹음 대본 포함)은 [docs/my-voice.md](docs/my-voice.md)에 있습니다. 유료 서비스 없이, 녹음이 컴퓨터 밖으로 나가지 않습니다.
 

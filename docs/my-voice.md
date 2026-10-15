@@ -15,7 +15,7 @@
 - 앱의 Supertonic 모델은 그대로 두고, 녹음과 비슷하게 들리도록 목소리 특징값만 맞춥니다. 방법과 측정 결과는 [spike/voice_inversion/README.md](../spike/voice_inversion/README.md)에 있습니다.
 - 목소리 색깔(음색)은 따라오지만, 말버릇과 억양까지 따라오지는 않습니다.
 - 품질은 화자 인식 모델의 점수로만 확인했고, 사람 귀로 비교한 검증은 아직 없습니다. 만든 뒤 꼭 들어 보고 고르세요(5번).
-- **Supertonic 2용과 3용은 따로 만듭니다.** 서술에 쓰는 기본 목소리는 Supertonic 2입니다. 2용 파일을 3에 넣으면 엉뚱한 목소리가 납니다.
+- **Supertonic 2용과 3용은 따로 만듭니다.** 앱에서 쓰는 음성 팩과 같은 모델로 만드세요(품질은 Supertonic 3을 권합니다). 2용 파일을 3에 넣으면 엉뚱한 목소리가 납니다.
 
 ## 1. 동의 확인
 
@@ -117,7 +117,7 @@ afconvert -f WAVE -d LEI16 녹음1.m4a 녹음1.wav
 녹음 wav를 모두 `--ref` 뒤에 적습니다. 도구가 파일들을 하나로 이어 붙입니다. `--name`은 영문이나 숫자로 짓습니다.
 
 ```bash
-python spike/voice_inversion/voice_inversion.py fit --ref 녹음0.wav 녹음1.wav 녹음2.wav 녹음3.wav --name me --model supertonic-2 --out my-voice
+python spike/voice_inversion/voice_inversion.py fit --ref 녹음0.wav 녹음1.wav 녹음2.wav 녹음3.wav --name me --model supertonic-3 --out my-voice
 ```
 
 `my-voice` 폴더에 목소리 파일 세 개가 생깁니다.
@@ -128,18 +128,18 @@ python spike/voice_inversion/voice_inversion.py fit --ref 녹음0.wav 녹음1.wa
 | `me.blend.json` | 기본 목소리 10개를 섞어 가장 가깝게 만든 목소리 |
 | `me.nearest.json` | 기본 목소리 중 가장 비슷한 하나 |
 
-대사만 다른 목소리로 읽게 할 Supertonic 3용이 필요하면 `--model supertonic-3`으로 한 번 더 만듭니다.
+가벼운 Supertonic 2를 쓴다면 `--model supertonic-2`로 만듭니다. 두 팩 모두에서 쓰려면 각각 한 번씩 만듭니다.
 
 ## 5. 들어 보고 고르기
 
 세 파일로 확인용 음성 팩을 만들고, 앱과 같은 방식으로 한국어 문장을 합성해 녹음과 비교합니다.
 
 ```bash
-python spike/voice_inversion/voice_inversion.py pack my-voice/me.nearest.json my-voice/me.blend.json my-voice/me.invert.json --model supertonic-2 --out my-voice/me-supertonic-2.zip
+python spike/voice_inversion/voice_inversion.py pack my-voice/me.nearest.json my-voice/me.blend.json my-voice/me.invert.json --model supertonic-3 --out my-voice/me-supertonic-3.zip
 ```
 
 ```bash
-python spike/voice_inversion/voice_inversion.py eval my-voice/me-supertonic-2.zip --ref 녹음0.wav 녹음1.wav 녹음2.wav 녹음3.wav --name me --out my-voice/eval
+python spike/voice_inversion/voice_inversion.py eval my-voice/me-supertonic-3.zip --ref 녹음0.wav 녹음1.wav 녹음2.wav 녹음3.wav --name me --out my-voice/eval
 ```
 
 - **들어 보기:** `my-voice/eval` 폴더에 문장마다 소리 파일이 생깁니다.
@@ -159,7 +159,7 @@ python spike/voice_inversion/voice_inversion.py eval my-voice/me-supertonic-2.zi
 이때는 다듬기를 시작한 기본 목소리에서 **일부만 옮긴 약한 버전**을 만들어 비교하세요. 다시 학습하지 않아 몇 초면 됩니다.
 
 ```bash
-python spike/voice_inversion/voice_inversion.py mix my-voice/me.invert.json --percent 25 50 75 --model supertonic-2
+python spike/voice_inversion/voice_inversion.py mix my-voice/me.invert.json --percent 25 50 75 --model supertonic-3
 ```
 
 - `my-voice` 폴더에 `me.invert.25.json`, `me.invert.50.json`, `me.invert.75.json`이 생깁니다. 숫자가 작을수록 기본 목소리에 가까워 자연스럽고, 클수록 내 목소리에 가깝습니다.
@@ -174,7 +174,7 @@ python spike/voice_inversion/voice_inversion.py mix my-voice/me.invert.json --pe
 1. 고른 JSON 파일의 이름을 `내 목소리.json`처럼 바꿉니다. 파일 이름이 앱의 목소리 목록에 그대로 보입니다.
 2. 파일을 기기로 옮깁니다(USB, 클라우드, 메일 등).
 3. 앱 서재 위쪽의 **목소리** 버튼 → **직접 만든 목소리 넣기** → 동의 확인 → 파일을 고릅니다.
-4. "어느 음성 팩에 넣을까요?"에서 **만든 모델과 같은 팩**을 고릅니다(`--model supertonic-2`로 만들었으면 Supertonic 2).
+4. "어느 음성 팩에 넣을까요?"에서 **만든 모델과 같은 팩**을 고릅니다(`--model supertonic-3`으로 만들었으면 Supertonic 3).
 5. 목소리 목록 맨 끝에 추가됩니다. 누르면 들어 보고 그 목소리로 고릅니다.
 
 앱 쪽 화면은 [사용 방법 8번](guide.md#8-직접-만든-목소리-넣기)에 있습니다.
