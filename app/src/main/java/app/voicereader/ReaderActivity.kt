@@ -1,10 +1,12 @@
 package app.voicereader
 
+import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.media.AudioManager
 import android.os.Bundle
 import android.os.SystemClock
+import android.util.AttributeSet
 import android.view.ActionMode
 import android.view.KeyEvent as AndroidKeyEvent
 import android.view.Menu
@@ -13,6 +15,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.WindowInsetsControllerCompat
@@ -36,10 +39,14 @@ import org.readium.r2.navigator.Decoration
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.epub.EpubPreferences
+import org.readium.r2.navigator.input.InputListener
+import org.readium.r2.navigator.input.KeyEvent
+import org.readium.r2.navigator.input.TapEvent
 import org.readium.r2.navigator.preferences.FontFamily
 import org.readium.r2.navigator.preferences.Theme
 import org.readium.r2.navigator.util.DirectionalNavigationAdapter
 import org.readium.r2.shared.publication.Link
+import org.readium.r2.shared.publication.services.positions
 import org.readium.r2.shared.util.Url
 
 private val SPEEDS = listOf(0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
@@ -71,12 +78,30 @@ class ReaderActivity : AppCompatActivity() {
     private val app get() = application as App
     private lateinit var navigator: EpubNavigatorFragment
     private lateinit var topBar: View
-    private lateinit var listen: MaterialButton
+    private lateinit var player: View
+    private lateinit var play: MaterialButton
+    private var chromeVisible = false
+    private var selection: ActionMode? = null
+
+    /** Back clears a text selection, then puts the bars away, and only then leaves the book. */
+    private val backSteps = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            val mode = selection ?: return setChrome(false)
+            navigator.clearSelection() // else the page keeps it and spends the next tap on clearing it
+            mode.finish()
+        }
+    }
+
+    private fun updateBack() {
+        backSteps.isEnabled = selection != null || chromeVisible
+    }
 
     /** Adds "발음 고치기" to the text selection menu, next to Copy: long-press a word, fix how it is read. */
     private val selectionActions = object : ActionMode.Callback {
         override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
             menu.add(Menu.NONE, R.id.fixPronunciation, 0, "발음 고치기")
+            selection = mode
+            updateBack()
             return true
         }
 
@@ -86,13 +111,17 @@ class ReaderActivity : AppCompatActivity() {
             if (item.itemId != R.id.fixPronunciation) return false
             lifecycleScope.launch {
                 val word = selectedWord() // read before the selection goes away
+                navigator.clearSelection() // else the page keeps it and spends the next tap on clearing it
                 mode.finish()
                 editPronunciation(word, "", bookOnly = true, existing = false)
             }
             return true
         }
 
-        override fun onDestroyActionMode(mode: ActionMode) {}
+        override fun onDestroyActionMode(mode: ActionMode) {
+            selection = null
+            updateBack()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -113,25 +142,39 @@ class ReaderActivity : AppCompatActivity() {
         setContentView(R.layout.reader)
         navigator = supportFragmentManager.findFragmentById(R.id.navigator) as EpubNavigatorFragment
         topBar = findViewById(R.id.topBar)
+        player = findViewById(R.id.player)
+        play = findViewById(R.id.play)
+        findViewById<TextView>(R.id.bookTitle).text = app.book?.title
+        findViewById<PageKeyLayout>(R.id.root).apply {
+            onPageKey = { event -> pageKey(event) }
+            requestFocus() // keeps the root in the focus chain, so its pre-IME hook sees every key
+        }
         applyPageTheme(app.readerPrefs.theme ?: Theme.LIGHT)
         app.warmUpVoice()
+        onBackPressedDispatcher.addCallback(this, backSteps)
 
         findViewById<View>(R.id.back).setOnClickListener { finish() }
         findViewById<View>(R.id.toc).setOnClickListener { showToc() }
         findViewById<View>(R.id.settings).setOnClickListener { showSettings() }
 
-        listen = findViewById(R.id.listen)
-        val player = findViewById<View>(R.id.player)
-        val playerRule = findViewById<View>(R.id.playerRule)
-        val chapter = findViewById<TextView>(R.id.chapter)
-        listen.setOnClickListener { togglePlay() }
-        findViewById<View>(R.id.play).setOnClickListener { togglePlay() }
+        val footChapter = findViewById<TextView>(R.id.footChapter)
+        val footPosition = findViewById<TextView>(R.id.footPosition)
+        play.setOnClickListener { togglePlay() }
         findViewById<View>(R.id.prev).setOnClickListener { app.tts.value?.skipToPreviousUtterance() }
         findViewById<View>(R.id.next).setOnClickListener { app.tts.value?.skipToNextUtterance() }
 
-        // Taps near the edges turn pages, without animation (page keys and the scroll wheel: dispatchKeyEvent and
-        // dispatchGenericMotionEvent below).
-        navigator.addInputListener(DirectionalNavigationAdapter(navigator, animatedTransition = false))
+        // Taps near the edges turn pages without animation and put the bars away (that's reading); a tap in the middle
+        // shows or hides them. Page keys and the scroll wheel: dispatchKeyEvent and dispatchGenericMotionEvent below.
+        val pages = DirectionalNavigationAdapter(navigator, animatedTransition = false)
+        navigator.addInputListener(object : InputListener {
+            override fun onTap(event: TapEvent): Boolean {
+                setChrome(if (pages.onTap(event)) false else !chromeVisible)
+                return true
+            }
+
+            // Keys that reach Readium's page anyway (PageKeyLayout takes the usual ones first).
+            override fun onKey(event: KeyEvent): Boolean = pages.onKey(event).also { if (it) setChrome(false) }
+        })
 
         if (savedInstanceState == null && intent.getBooleanExtra(AUTOPLAY, false) && app.tts.value == null) {
             lifecycleScope.launch { app.startTts(app.book?.locator) }
@@ -143,19 +186,18 @@ class ReaderActivity : AppCompatActivity() {
                     .map { it?.playWhenReady == true }
                     .distinctUntilChanged()
                 launch {
-                    // The player only while listening, so reading by eye gets the whole height; 듣기 sits in the top bar.
                     playing.collect {
-                        player.isVisible = it
-                        playerRule.isVisible = it
-                        listen.isVisible = !it
+                        play.setIconResource(if (it) R.drawable.ic_pause else R.drawable.ic_play)
+                        play.text = if (it) "일시정지" else "듣기"
+                        if (it) setChrome(false) // listening: the page and its highlighted line are all that show
                     }
                 }
                 launch {
+                    val pages = pub.positions().size
                     navigator.currentLocator.collect { locator ->
-                        chapter.text = listOfNotNull(
-                            chapterTitle(locator.href),
-                            locator.locations.totalProgression?.let { "${(it * 100).roundToInt()}%" },
-                        ).joinToString("  ·  ")
+                        footChapter.text = chapterTitle(locator.href).orEmpty()
+                        footPosition.text = locator.locations.position?.takeIf { pages > 0 }?.let { "$it/$pages" }
+                            ?: locator.locations.totalProgression?.let { "${(it * 100).roundToInt()}%" }.orEmpty()
                     }
                 }
                 val utterances = app.tts.flatMapLatest { nav -> nav?.location?.map { it.utteranceLocator } ?: flowOf(null) }
@@ -186,7 +228,12 @@ class ReaderActivity : AppCompatActivity() {
             getSystemService(AudioManager::class.java).dispatchMediaKeyEvent(event)
             return true
         }
-        val forward = PAGE_KEYS[event.keyCode] ?: return super.dispatchKeyEvent(event)
+        return pageKey(event) || super.dispatchKeyEvent(event)
+    }
+
+    /** Turns the page for a page key (on key down) and says whether it was one. */
+    private fun pageKey(event: AndroidKeyEvent): Boolean {
+        val forward = PAGE_KEYS[event.keyCode] ?: return false
         if (event.action == AndroidKeyEvent.ACTION_DOWN) turnPage(forward)
         return true
     }
@@ -208,6 +255,7 @@ class ReaderActivity : AppCompatActivity() {
         val now = SystemClock.uptimeMillis()
         if (now - lastTurn < 250) return
         lastTurn = now
+        setChrome(false)
         if (forward) navigator.goForward(animated = false) else navigator.goBackward(animated = false)
     }
 
@@ -215,6 +263,15 @@ class ReaderActivity : AppCompatActivity() {
         super.onStop()
         // While TTS runs, App saves its position in the background instead.
         if (::navigator.isInitialized && app.tts.value == null) app.saveLocator(navigator.currentLocator.value)
+    }
+
+    /** Shows or hides the bars at once: a fade would be a dozen e-ink refreshes. */
+    private fun setChrome(visible: Boolean) {
+        if (chromeVisible == visible) return
+        chromeVisible = visible
+        topBar.isVisible = visible
+        player.isVisible = visible
+        updateBack()
     }
 
     /** The bars take the page's colors, so they read as part of the page; rules separate them from the text. */
@@ -227,7 +284,11 @@ class ReaderActivity : AppCompatActivity() {
         findViewById<View>(R.id.player).setBackgroundColor(page)
         findViewById<View>(R.id.topBarRule).setBackgroundColor(ink)
         findViewById<View>(R.id.playerRule).setBackgroundColor(ink)
-        findViewById<TextView>(R.id.chapter).setTextColor(ink)
+        findViewById<TextView>(R.id.bookTitle).setTextColor(ink)
+        findViewById<View>(R.id.footer).setBackgroundColor(page)
+        val quiet = ColorUtils.setAlphaComponent(ink, 0xB0) // the page line stays in the background
+        findViewById<TextView>(R.id.footChapter).setTextColor(quiet)
+        findViewById<TextView>(R.id.footPosition).setTextColor(quiet)
         findViewById<MaterialButton>(R.id.back).apply {
             iconTint = ColorStateList(pressed, intArrayOf(page, ink))
             backgroundTintList = ColorStateList(pressed, intArrayOf(ink, Color.TRANSPARENT))
@@ -240,11 +301,11 @@ class ReaderActivity : AppCompatActivity() {
         val nav = app.tts.value
         when {
             nav == null -> lifecycleScope.launch {
-                listen.text = "준비 중…" // loading the voice can take seconds on an e-ink device
+                play.text = "준비 중…" // loading the voice can take seconds on an e-ink device
                 try {
                     app.startTts(navigator.firstVisibleElementLocator())
                 } finally {
-                    listen.text = "듣기"
+                    if (app.tts.value?.playback?.value?.playWhenReady != true) play.text = "듣기"
                 }
             }
             nav.playback.value.playWhenReady -> nav.pause()
@@ -272,15 +333,26 @@ class ReaderActivity : AppCompatActivity() {
         return entries
     }
 
-    private fun Link.isAt(href: Url) = url().removeFragment().isEquivalent(href.removeFragment())
+    /**
+     * The table-of-contents entry for [href]: the last one at or before it in reading order, since a chapter can span
+     * several files and the contents point at the first only.
+     */
+    private fun currentTocLink(href: Url): Link? {
+        val order = app.publication?.readingOrder?.map { it.url().removeFragment() } ?: return null
+        fun indexOf(url: Url) = order.indexOfFirst { it.isEquivalent(url.removeFragment()) }
+        val here = indexOf(href).takeIf { it >= 0 } ?: return null
+        val placed = tocEntries().map { (_, link) -> indexOf(link.url()) to link }.filter { (i, _) -> i in 0..here }
+        val nearest = placed.maxOfOrNull { (i, _) -> i } ?: return null
+        return placed.last { (i, _) -> i == nearest }.second
+    }
 
-    private fun chapterTitle(href: Url): String? = tocEntries().lastOrNull { (_, link) -> link.isAt(href) }?.second?.title
+    private fun chapterTitle(href: Url): String? = currentTocLink(href)?.title
 
     private fun showToc() {
-        val href = navigator.currentLocator.value.href
+        val here = currentTocLink(navigator.currentLocator.value.href)
         Sheet(this, "목차").apply {
             tocEntries().forEach { (depth, link) ->
-                row(link.title ?: link.href.toString(), indent = depth, current = link.isAt(href)) { go(link) }
+                row(link.title ?: link.href.toString(), indent = depth, current = link === here) { go(link) }
             }
         }.show()
     }
@@ -489,4 +561,16 @@ class ReaderActivity : AppCompatActivity() {
             .show()
         (if (from.isEmpty()) fromField else toField).editText?.requestFocus()
     }
+}
+
+/**
+ * The reader's root. It sees keys before the input method and before touch-mode handling: right after a touch on the
+ * page, Android spends the first arrow or page key on leaving touch mode, so it never reached the activity and the first
+ * notch of a scroll wheel did nothing.
+ */
+class PageKeyLayout(context: Context, attrs: AttributeSet?) : LinearLayout(context, attrs) {
+    var onPageKey: ((AndroidKeyEvent) -> Boolean)? = null
+
+    override fun dispatchKeyEventPreIme(event: AndroidKeyEvent): Boolean =
+        onPageKey?.invoke(event) == true || super.dispatchKeyEventPreIme(event)
 }
