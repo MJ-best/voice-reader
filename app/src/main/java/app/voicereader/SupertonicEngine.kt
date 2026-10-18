@@ -3,6 +3,7 @@ package app.voicereader
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.media.PlaybackParams
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -205,8 +206,11 @@ class Speakers(val narration: Voice, val dialogue: Voice) {
     fun of(text: String): Voice = if (mixed && isDialogue(text)) dialogue else narration
 }
 
-/** Plays [audio] to the end on the calling thread, unless [keepGoing] turns false. Returns whether it finished. */
-fun playBlocking(audio: GeneratedAudio, keepGoing: () -> Boolean): Boolean {
+/**
+ * Plays [audio] to the end on the calling thread, unless [keepGoing] turns false. Returns whether it finished.
+ * [speed] other than 1 time-stretches (pitch kept): for recordings, which can't be re-synthesized at another speed.
+ */
+fun playBlocking(audio: GeneratedAudio, speed: Float = 1f, keepGoing: () -> Boolean): Boolean {
     val samples = audio.samples
     if (samples.isEmpty()) return true
     val track = AudioTrack.Builder()
@@ -228,6 +232,7 @@ fun playBlocking(audio: GeneratedAudio, keepGoing: () -> Boolean): Boolean {
         .build()
     try {
         track.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
+        if (speed != 1f) track.playbackParams = PlaybackParams().setSpeed(speed)
         track.play()
         while (track.playbackHeadPosition < samples.size) {
             if (!keepGoing()) return false
@@ -237,6 +242,17 @@ fun playBlocking(audio: GeneratedAudio, keepGoing: () -> Boolean): Boolean {
     } finally {
         track.release()
     }
+}
+
+/** Plays a sentence, then the pause after it: waited here rather than baked into the audio, so changing it needs no resynthesis. */
+fun playSentence(audio: GeneratedAudio, speed: Float, pauseMs: Int, keepGoing: () -> Boolean): Boolean {
+    if (!playBlocking(audio, speed, keepGoing)) return false
+    val pauseEnds = SystemClock.elapsedRealtime() + pauseMs
+    while (SystemClock.elapsedRealtime() < pauseEnds) {
+        if (!keepGoing()) return false
+        Thread.sleep(10)
+    }
+    return true
 }
 
 /**
@@ -327,14 +343,7 @@ private class SupertonicEngine(
                 // still synthesizing
             }
         }
-        if (!playBlocking(audio) { current == id }) return false
-        // The pause between sentences: waited here rather than baked into the audio, so changing it needs no resynthesis.
-        val pauseEnds = SystemClock.elapsedRealtime() + pauseMs()
-        while (SystemClock.elapsedRealtime() < pauseEnds) {
-            if (current != id) return false
-            Thread.sleep(10)
-        }
-        return true
+        return playSentence(audio, 1f, pauseMs()) { current == id }
     }
 
     override fun stop() {

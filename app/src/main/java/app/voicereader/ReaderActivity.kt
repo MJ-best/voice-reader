@@ -16,6 +16,7 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.WindowInsetsControllerCompat
@@ -35,6 +36,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import org.readium.r2.navigator.DecorableNavigator
 import org.readium.r2.navigator.Decoration
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
@@ -46,6 +48,7 @@ import org.readium.r2.navigator.preferences.FontFamily
 import org.readium.r2.navigator.preferences.Theme
 import org.readium.r2.navigator.util.DirectionalNavigationAdapter
 import org.readium.r2.shared.publication.Link
+import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.services.positions
 import org.readium.r2.shared.util.Url
 
@@ -96,10 +99,14 @@ class ReaderActivity : AppCompatActivity() {
         backSteps.isEnabled = selection != null || chromeVisible
     }
 
-    /** Adds "발음 고치기" to the text selection menu, next to Copy: long-press a word, fix how it is read. */
+    /**
+     * Adds "줄긋기" and "발음 고치기" to the text selection menu, next to Copy: long-press, then underline the passage
+     * or fix how a word is read.
+     */
     private val selectionActions = object : ActionMode.Callback {
         override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
-            menu.add(Menu.NONE, R.id.fixPronunciation, 0, "발음 고치기")
+            menu.add(Menu.NONE, R.id.underline, 0, "줄긋기")
+            menu.add(Menu.NONE, R.id.fixPronunciation, 1, "발음 고치기")
             selection = mode
             updateBack()
             return true
@@ -108,6 +115,14 @@ class ReaderActivity : AppCompatActivity() {
         override fun onPrepareActionMode(mode: ActionMode, menu: Menu) = false
 
         override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+            if (item.itemId == R.id.underline) {
+                lifecycleScope.launch {
+                    navigator.currentSelection()?.locator?.let(app::addUnderline)
+                    navigator.clearSelection()
+                    mode.finish()
+                }
+                return true
+            }
             if (item.itemId != R.id.fixPronunciation) return false
             lifecycleScope.launch {
                 val word = selectedWord() // read before the selection goes away
@@ -121,6 +136,25 @@ class ReaderActivity : AppCompatActivity() {
         override fun onDestroyActionMode(mode: ActionMode) {
             selection = null
             updateBack()
+        }
+    }
+
+    /** The book's sentences go to a file for a computer to record in the user's voice (docs/my-voice-book.md). */
+    private val exportSentences = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) lifecycleScope.launch {
+            toast("문장을 꺼내는 중…")
+            app.exportSentences(uri).fold(
+                { toast("문장 ${it}개를 저장했어요. 이 파일을 컴퓨터로 옮겨 음성을 만드세요.") },
+                { toast("문장을 저장하지 못했어요: ${it.message}") },
+            )
+        }
+    }
+
+    /** ...and the recording comes back as a zip. */
+    private val pickRecording = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) lifecycleScope.launch {
+            toast("음성을 넣는 중…")
+            toast(app.importRecording(uri) ?: "내 목소리 음성을 넣었어요. 듣기를 누르면 이 음성으로 읽어요.")
         }
     }
 
@@ -163,6 +197,16 @@ class ReaderActivity : AppCompatActivity() {
         findViewById<View>(R.id.prev).setOnClickListener { app.tts.value?.skipToPreviousUtterance() }
         findViewById<View>(R.id.next).setOnClickListener { app.tts.value?.skipToNextUtterance() }
 
+        // A tap on an underline offers to remove it (and is not taken as a page tap). Readium calls this on the
+        // WebView's JavaScript thread, so the sheet opens on the main one.
+        navigator.addDecorationListener("underlines", object : DecorableNavigator.Listener {
+            override fun onDecorationActivated(event: DecorableNavigator.OnActivatedEvent): Boolean {
+                val id = event.decoration.id
+                runOnUiThread { showUnderline(id) }
+                return true
+            }
+        })
+
         // Taps near the edges turn pages without animation and put the bars away (that's reading); a tap in the middle
         // shows or hides them. Page keys and the scroll wheel: dispatchKeyEvent and dispatchGenericMotionEvent below.
         val pages = DirectionalNavigationAdapter(navigator, animatedTransition = false)
@@ -185,6 +229,7 @@ class ReaderActivity : AppCompatActivity() {
                 val playing = app.tts.flatMapLatest { it?.playback ?: flowOf(null) }
                     .map { it?.playWhenReady == true }
                     .distinctUntilChanged()
+                launch { app.underlines.collect { applyUnderlines(it) } }
                 launch {
                     playing.collect {
                         play.setIconResource(if (it) R.drawable.ic_pause else R.drawable.ic_play)
@@ -323,6 +368,37 @@ class ReaderActivity : AppCompatActivity() {
         }
     }
 
+    /** Underlines in the page's ink color, so they stay visible on a dark or sepia page. */
+    private suspend fun applyUnderlines(list: List<App.Underline> = app.underlines.value) {
+        val ink = (app.readerPrefs.theme ?: Theme.LIGHT).contentColor
+        navigator.applyDecorations(list.map { Decoration(it.id, it.locator, Decoration.Style.Underline(tint = ink)) }, "underlines")
+    }
+
+    private fun snippet(u: App.Underline): String =
+        u.locator.text.highlight.orEmpty().trim().replace(Regex("""\s+"""), " ").let { if (it.length > 60) it.take(60) + "…" else it }
+
+    private fun showUnderline(id: String) {
+        val u = app.underlines.value.find { it.id == id } ?: return
+        Sheet(this, "줄 그은 곳", snippet(u)).apply {
+            row("줄 지우기", icon = R.drawable.ic_delete) { app.removeUnderline(id) }
+        }.show()
+    }
+
+    private fun showUnderlines() {
+        val list = app.underlines.value
+        val hint = if (list.isEmpty()) "아직 없어요. 본문을 길게 눌러 범위를 고른 뒤 ‘줄긋기’를 누르세요."
+        else "누르면 그곳으로 가요. 지우려면 본문의 밑줄을 누르세요."
+        Sheet(this, "줄 그은 곳", hint).apply {
+            list.forEach { u -> row(snippet(u), chapterTitle(u.locator.href)) { go(u.locator) } }
+        }.show()
+    }
+
+    private fun go(locator: Locator) {
+        setChrome(false)
+        val nav = app.tts.value
+        if (nav != null) nav.go(locator) else navigator.go(locator, animated = false)
+    }
+
     private fun go(link: Link) {
         val nav = app.tts.value
         if (nav != null) app.publication?.locatorFromLink(link)?.let { nav.go(it) }
@@ -386,7 +462,8 @@ class ReaderActivity : AppCompatActivity() {
             ) { showDisplay() }
             row(
                 "낭독",
-                "속도 ${speedLabel(app.speed)} · ${app.narrationVoiceName}" + (app.activeVoice?.let { " (${voiceLabel(it)})" } ?: ""),
+                "속도 ${speedLabel(app.speed)} · ${app.narrationVoiceName}" + (app.activeVoice?.let { " (${voiceLabel(it)})" } ?: "") +
+                    if (app.recordingProgress() != null) " · 내 목소리 음성" else "",
                 icon = R.drawable.ic_headphones,
                 more = true,
             ) { showNarration() }
@@ -399,6 +476,9 @@ class ReaderActivity : AppCompatActivity() {
             row("발음 사전", "${app.bookWords.size + app.globalWords.size}개 · 단어를 길게 눌러 바로 고칠 수 있어요", icon = R.drawable.ic_mic, more = true) {
                 showPronunciations()
             }
+            row("줄 그은 곳", "${app.underlines.value.size}개 · 본문을 길게 눌러 줄을 그어요", icon = R.drawable.ic_underline, more = true) {
+                showUnderlines()
+            }
         }.show()
     }
 
@@ -409,6 +489,7 @@ class ReaderActivity : AppCompatActivity() {
             app.readerPrefs = new
             navigator.submitPreferences(new)
             applyPageTheme(new.theme ?: Theme.LIGHT)
+            lifecycleScope.launch { applyUnderlines() } // their color follows the page's ink
         }
         Sheet(this, "보기").apply {
             choice("테마", null, listOf("라이트", "세피아", "다크"), THEMES.indexOf(prefs.theme ?: Theme.LIGHT).coerceAtLeast(0)) {
@@ -446,6 +527,33 @@ class ReaderActivity : AppCompatActivity() {
             ) { app.sentencePauseMs = PAUSES[it] }
             row("대사 목소리", app.dialogueVoiceName ?: "서술과 같은 목소리", icon = R.drawable.ic_dialogue, more = true) {
                 showDialogueVoice()
+            }
+            val recording = app.recordingProgress()?.let { (done, total) ->
+                if (done >= total) "이 책 전체 · 문장 ${done}개" else "문장 ${total}개 중 ${done}개 · 나머지는 고른 목소리로"
+            }
+            row("내 목소리 음성", recording ?: "컴퓨터에서 만든 이 책의 음성으로 읽어요", icon = R.drawable.ic_voice, more = true) {
+                showRecording()
+            }
+        }.show()
+    }
+
+    /** A recording of this book made on a computer (VoxCPM2): export the sentences, bring back the zip. */
+    private fun showRecording() {
+        val has = app.recordingProgress() != null
+        Sheet(this, "내 목소리 음성", "컴퓨터에서 이 책을 내 목소리로 만들어 넣으면 그 음성으로 읽어요. 음성이 없는 문장은 고른 목소리로 읽어요.").apply {
+            row("1. 문장 내보내기", "이 책에서 읽을 문장을 파일로 저장해요", icon = R.drawable.ic_text) {
+                exportSentences.launch("${app.book?.title} 문장.json")
+            }
+            row(if (has) "2. 음성 다시 넣기" else "2. 음성 넣기", "컴퓨터에서 만든 zip 파일을 골라요", icon = R.drawable.ic_add) {
+                confirmConsent { pickRecording.launch(arrayOf("application/zip", "application/octet-stream")) }
+            }
+            if (has) row("음성 지우기", "이 책을 다시 고른 목소리로 읽어요", icon = R.drawable.ic_delete) {
+                MaterialAlertDialogBuilder(this@ReaderActivity)
+                    .setTitle("내 목소리 음성 지우기")
+                    .message("이 책에 넣은 내 목소리 음성을 지울까요? 다시 쓰려면 zip 파일을 다시 넣어야 해요.")
+                    .setPositiveButton("지우기") { _, _ -> app.deleteRecording() }
+                    .setNegativeButton("취소", null)
+                    .show()
             }
         }.show()
     }

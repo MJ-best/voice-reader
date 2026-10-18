@@ -13,8 +13,8 @@ android {
         applicationId = "app.voicereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.1.5"
+        versionCode = 7
+        versionName = "0.1.6"
         // sherpa-onnx ships ~30MB of native code per ABI; phones and the Apple-silicon emulator are arm64.
         ndk { abiFilters += "arm64-v8a" }
     }

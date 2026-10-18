@@ -34,6 +34,7 @@ import java.io.FileNotFoundException
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
 import java.util.UUID
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
@@ -58,8 +59,12 @@ import org.readium.navigator.media.tts.android.AndroidTtsPreferences
 import org.readium.r2.navigator.epub.EpubPreferences
 import org.readium.r2.navigator.preferences.FontFamily
 import org.readium.r2.navigator.preferences.Theme
+import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
+import org.readium.r2.shared.publication.services.content.Content
+import org.readium.r2.shared.publication.services.content.TextContentTokenizer
+import org.readium.r2.shared.publication.services.content.content
 import org.readium.r2.shared.publication.services.coverFitting
 import org.readium.r2.shared.publication.services.isRestricted
 import org.readium.r2.shared.util.Language
@@ -398,6 +403,7 @@ class App : Application(), TtsNavigator.Listener {
             bookWords.clear()
             bookWords.putAll(readWords(bookWordsFile(book)))
             rebuildDictionary()
+            underlines.value = readUnderlines(book)
         }
         book.opened = System.currentTimeMillis()
         saveBooks()
@@ -426,7 +432,8 @@ class App : Application(), TtsNavigator.Listener {
         saveShelves()
         // A device file stays where it is (it's the user's); it is only kept out of future scans.
         if (book.path != null) skippedPaths = skippedPaths + book.path else epub(book).delete()
-        listOf(cover(book), bookWordsFile(book)).forEach { it.delete() }
+        listOf(cover(book), bookWordsFile(book), underlinesFile(book)).forEach { it.delete() }
+        recordingsDir(book).deleteRecursively()
         prefs.edit().remove("dialogueVoice:${book.id}").apply()
     }
 
@@ -453,6 +460,39 @@ class App : Application(), TtsNavigator.Listener {
     }
 
     // --- Pronunciation dictionaries (Q-2): global + per book, plain {"원문": "읽는 법"} JSON shared across platforms ---
+
+    // --- Underlines (줄긋기): passages the reader marked in the open book, in reading order ---
+
+    class Underline(val id: String, val locator: Locator)
+
+    val underlines = MutableStateFlow<List<Underline>>(emptyList())
+
+    private fun underlinesFile(book: Book) = File(dir, "${book.id}.underlines.json")
+
+    private fun readUnderlines(book: Book): List<Underline> {
+        val array = JSONArray(underlinesFile(book).readAtomically() ?: return emptyList())
+        return (0 until array.length()).mapNotNull { i ->
+            val o = array.getJSONObject(i)
+            Locator.fromJSON(o.optJSONObject("locator"))?.let { Underline(o.getString("id"), it) }
+        }
+    }
+
+    fun addUnderline(locator: Locator) = saveUnderlines(underlines.value + Underline(UUID.randomUUID().toString(), locator))
+
+    fun removeUnderline(id: String) = saveUnderlines(underlines.value.filterNot { it.id == id })
+
+    private fun saveUnderlines(list: List<Underline>) {
+        val order = publication?.readingOrder?.map { it.url() }.orEmpty()
+        val sorted = list.sortedWith(compareBy(
+            { u -> order.indexOfFirst { it.isEquivalent(u.locator.href) } },
+            { u -> u.locator.locations.progression ?: 0.0 },
+        ))
+        underlines.value = sorted
+        val book = book ?: return
+        underlinesFile(book).writeAtomically(
+            JSONArray(sorted.map { JSONObject().put("id", it.id).put("locator", it.locator.toJSON()) }).toString(),
+        )
+    }
 
     private val globalWordsFile by lazy { File(filesDir, "pronunciation.json") }
     private fun bookWordsFile(book: Book) = File(dir, "${book.id}.pronunciation.json")
@@ -653,34 +693,45 @@ class App : Application(), TtsNavigator.Listener {
 
     /**
      * Readium's sentence splitter, plus: lines of dialogue become pieces of their own when the book mixes voices, and
-     * each freshly split paragraph is queued for synthesis before it is read.
+     * each freshly split paragraph is queued for synthesis before it is read. A book with its own recording is split
+     * exactly as [exportSentences] split it, so every piece finds its file.
      */
     private fun sentenceTokenizer(language: Language?): TextTokenizer {
         val sentences = DefaultTextContentTokenizer(TextUnit.Sentence, language)
         return object : TextTokenizer {
             override fun tokenize(data: String): List<IntRange> {
                 val speakers = speakers
-                val split = if (speakers?.mixed == true) splitDialogue(data, sentences::tokenize) else sentences.tokenize(data)
-                if (speakers == null) return split // the device's TTS has no trouble with short sentences
-                val ranges = joinShortSentences(split) { a, b ->
-                    val (x, y) = data.substring(a) to data.substring(b)
-                    speakers.of(x) != speakers.of(y) || isLatinOnly(x) != isLatinOnly(y) // one voice, one language per piece
+                val ranges = when {
+                    recorded != null -> recordedPieces(data, sentences)
+                    speakers == null -> return sentences.tokenize(data) // the device's TTS has no trouble with short sentences
+                    else -> {
+                        val split = if (speakers.mixed) splitDialogue(data, sentences::tokenize) else sentences.tokenize(data)
+                        joinShortSentences(split) { a, b ->
+                            val (x, y) = data.substring(a) to data.substring(b)
+                            speakers.of(x) != speakers.of(y) || isLatinOnly(x) != isLatinOnly(y) // one voice, one language per piece
+                        }
+                    }
                 }
-                prefetch(speakers, data, ranges, language ?: publication?.metadata?.language)
+                if (speakers != null) prefetch(speakers, data, ranges, language ?: publication?.metadata?.language)
                 return ranges
             }
         }
     }
 
+    /** One voice reads a recording, so short sentences join unless the language changes. Shared by export and playback. */
+    private fun recordedPieces(data: String, sentences: TextTokenizer): List<IntRange> =
+        joinShortSentences(sentences.tokenize(data)) { a, b -> isLatinOnly(data.substring(a)) != isLatinOnly(data.substring(b)) }
+
     private fun prefetch(speakers: Speakers, paragraph: String, ranges: List<IntRange>, language: Language?) {
         val texts = ranges.map { paragraph.substring(it) }.filter { text -> text.any { it.isLetterOrDigit() } } // as Readium
         // One queue per model, in reading order: narration and dialogue may be two voices of the same pack.
+        val recorded = recorded
         texts.groupBy { speakers.of(it).synthesizer }.forEach { (synthesizer, texts) ->
             synthesizer.prefetch(
                 texts.map { text ->
                     val spoken = spokenLanguage(text, language)
                     Spoken(speakable(text, spoken), supertonicLanguage(spoken), speakers.of(text).sid)
-                },
+                }.filterNot { recorded != null && File(recorded, "${recordingKey(it.text)}.m4a").exists() },
                 speed.toFloat(),
             )
         }
@@ -767,6 +818,108 @@ class App : Application(), TtsNavigator.Listener {
         }
     }
 
+    // --- A voice recorded elsewhere for one book (VoxCPM2 on a computer): books/<id>.voice/<key>.m4a ---
+
+    /** Set while a book with its own recording reads: sentences split as exported, and found by [recordingKey]. */
+    private var recorded: File? = null
+
+    private fun recordingsDir(book: Book) = File(dir, "${book.id}.voice")
+
+    /** Sentences of the open book that have a recording, and how many the export listed; null without one. */
+    fun recordingProgress(): Pair<Int, Int>? {
+        val dir = book?.let(::recordingsDir)?.takeIf { it.isDirectory } ?: return null
+        val done = dir.list().orEmpty().count { RECORDING_FILE.matches(it) }
+        val total = File(dir, "pack.json").readAtomically()?.let { runCatching { JSONObject(it).optInt("total") }.getOrNull() } ?: 0
+        return done to maxOf(total, done)
+    }
+
+    /**
+     * Writes the open book's sentences exactly as the reader will hand them to the voice: split like [recordedPieces],
+     * with pronunciation fixes, reading options and normalization applied. Mirrors Readium's TtsUtteranceIterator.
+     * Returns how many sentences, or an error.
+     */
+    @OptIn(ExperimentalReadiumApi::class)
+    suspend fun exportSentences(to: Uri): Result<Int> = withContext(Dispatchers.IO) {
+        runCatching {
+            val pub = publication ?: error("책이 열려 있지 않아요")
+            val book = book ?: error("책이 열려 있지 않아요")
+            val fallback = pub.metadata.language ?: Language(Locale.getDefault()) // the engines' settings language
+            val tokenizer = TextContentTokenizer(language = fallback, textTokenizerFactory = { language ->
+                val sentences = DefaultTextContentTokenizer(TextUnit.Sentence, language)
+                object : TextTokenizer {
+                    override fun tokenize(data: String) = recordedPieces(data, sentences)
+                }
+            })
+            val iterator = pub.content()?.iterator() ?: error("이 책에서는 문장을 꺼낼 수 없어요")
+            val seen = HashSet<String>()
+            val sentences = JSONArray()
+            while (true) {
+                val element = iterator.nextOrNull() ?: break
+                val pieces = tokenizer.tokenize(element).flatMap { e ->
+                    when (e) {
+                        is Content.TextElement -> e.segments.map { it.text to it.language }
+                        is Content.TextualElement -> listOfNotNull(e.text?.takeIf { it.isNotBlank() }?.let { it to null })
+                        else -> emptyList()
+                    }
+                }
+                for ((text, language) in pieces) {
+                    if (!text.any { it.isLetterOrDigit() }) continue // as Readium
+                    val spoken = speakable(text, spokenLanguage(text, language ?: fallback))
+                    val key = recordingKey(spoken)
+                    if (seen.add(key)) sentences.put(JSONObject().put("key", key).put("text", spoken))
+                }
+            }
+            val json = JSONObject().put("format", 1).put("title", book.title).put("author", book.author).put("sentences", sentences)
+            contentResolver.openOutputStream(to, "wt")?.use { it.write(json.toString(1).toByteArray()) } ?: error("파일을 저장할 수 없어요")
+            sentences.length()
+        }
+    }
+
+    /**
+     * Puts a recording zip (made from [exportSentences]) under the open book, replacing the previous one, after the
+     * user confirmed the voice is theirs or used with consent. Only <key>.m4a files and pack.json are taken. Returns an error, or null.
+     */
+    suspend fun importRecording(uri: Uri): String? {
+        val book = book ?: return "책이 열려 있지 않아요"
+        stopTts()
+        val dir = recordingsDir(book)
+        val part = File(dir.path + ".part")
+        return withContext(Dispatchers.IO) {
+            part.deleteRecursively()
+            part.mkdirs()
+            try {
+                val input = contentResolver.openInputStream(uri) ?: return@withContext "파일을 읽을 수 없어요"
+                var count = 0
+                ZipInputStream(input).use { zip ->
+                    generateSequence { zip.nextEntry }.filterNot { it.isDirectory }.forEach { entry ->
+                        val name = File(entry.name).name
+                        if (RECORDING_FILE.matches(name) || name == "pack.json") {
+                            File(part, name).outputStream().use { zip.copyTo(it) }
+                            if (name != "pack.json") count++
+                        }
+                    }
+                }
+                if (count == 0) return@withContext "내 목소리 음성 묶음(zip)이 아니에요"
+                File(part, "voice-pack.json").writeAtomically(
+                    JSONObject().put("source", displayName(uri)).put("consentConfirmed", true)
+                        .put("importedAt", System.currentTimeMillis()).toString(),
+                )
+                dir.deleteRecursively()
+                if (!part.renameTo(dir)) "음성을 저장할 수 없어요" else null
+            } catch (e: IOException) {
+                "압축을 풀 수 없어요: ${e.message}"
+            } finally {
+                part.deleteRecursively()
+            }
+        }
+    }
+
+    fun deleteRecording() {
+        val book = book ?: return
+        stopTts()
+        recordingsDir(book).deleteRecursively()
+    }
+
     // --- Settings ---
 
     var readerPrefs: EpubPreferences
@@ -818,8 +971,11 @@ class App : Application(), TtsNavigator.Listener {
             return toast("음성 팩을 불러올 수 없습니다: ${e.message}")
         }
         val android = AndroidTtsEngineProvider(this)
-        val base = if (speakers == null) android else SupertonicEngineProvider(android, speakers) { sentencePauseMs }
+        val synthesized = if (speakers == null) android else SupertonicEngineProvider(android, speakers) { sentencePauseMs }
+        val recorded = book?.let(::recordingsDir)?.takeIf { it.isDirectory }
+        val base = recorded?.let { RecordedEngineProvider(synthesized, it) { sentencePauseMs } } ?: synthesized
         this.speakers = speakers
+        this.recorded = recorded
         val factory = TtsNavigatorFactory(
             this, pub, TransformingEngineProvider(base, ::speakable, ::spokenLanguage), tokenizerFactory = ::sentenceTokenizer,
         ) ?: return toast("이 책은 낭독할 수 없습니다")
@@ -864,6 +1020,7 @@ class App : Application(), TtsNavigator.Listener {
         val nav = tts.value ?: return
         tts.value = null
         speakers = null
+        recorded = null
         session?.release()
         session = null
         nav.close()
