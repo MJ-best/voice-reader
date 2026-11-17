@@ -21,13 +21,8 @@ import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaSession
-import app.voicereader.korean.KoreanNormalizer
 import app.voicereader.korean.PronunciationDictionary
 import app.voicereader.korean.ReadingOptions
-import app.voicereader.korean.applyReadingOptions
-import app.voicereader.korean.isLatinOnly
-import app.voicereader.korean.joinShortSentences
-import app.voicereader.korean.splitDialogue
 import java.io.DataInputStream
 import java.io.File
 import java.io.FileNotFoundException
@@ -398,7 +393,7 @@ class App : Application(), TtsNavigator.Listener {
             stopTts()
             publication?.close()
             this.book = null
-            publication = open(epub(book)) ?: return false
+            publication = open(effectiveEpub(book)) ?: open(epub(book)) ?: return false
             this.book = book
             bookWords.clear()
             bookWords.putAll(readWords(bookWordsFile(book)))
@@ -432,9 +427,10 @@ class App : Application(), TtsNavigator.Listener {
         saveShelves()
         // A device file stays where it is (it's the user's); it is only kept out of future scans.
         if (book.path != null) skippedPaths = skippedPaths + book.path else epub(book).delete()
-        listOf(cover(book), bookWordsFile(book), underlinesFile(book)).forEach { it.delete() }
+        (listOf(cover(book), bookWordsFile(book), underlinesFile(book)) + (1..3).map { wordWiseEpub(book, it) })
+            .forEach { it.delete() }
         recordingsDir(book).deleteRecursively()
-        prefs.edit().remove("dialogueVoice:${book.id}").apply()
+        prefs.edit().remove("dialogueVoice:${book.id}").remove("wordWise:${book.id}").apply()
     }
 
     private fun loadBooks(): MutableList<Book> {
@@ -499,6 +495,8 @@ class App : Application(), TtsNavigator.Listener {
     val globalWords: MutableMap<String, String> by lazy { readWords(globalWordsFile) }
     val bookWords = mutableMapOf<String, String>()
     private var dictionary = PronunciationDictionary(emptyMap())
+    private var dictKeys: Array<String> = emptyArray()
+    private var dictVals: Array<String> = emptyArray()
 
     private fun readWords(file: File): MutableMap<String, String> {
         val json = JSONObject(file.readAtomically() ?: return mutableMapOf())
@@ -506,7 +504,10 @@ class App : Application(), TtsNavigator.Listener {
     }
 
     private fun rebuildDictionary() {
-        dictionary = PronunciationDictionary(globalWords + bookWords) // book entries win
+        val merged = globalWords + bookWords // book entries win
+        dictionary = PronunciationDictionary(merged)
+        dictKeys = merged.keys.toTypedArray()
+        dictVals = merged.values.toTypedArray()
     }
 
     /** Persists both dictionaries and re-reads the current sentence, so a fix is heard right away. */
@@ -538,20 +539,23 @@ class App : Application(), TtsNavigator.Listener {
             rereadSentence()
         }
 
-    /** Silence after each sentence, for voice packs (the system voice paces itself). */
+    /** Silence after each sentence (applies across Supertonic, Recorded, and Android system TTS). */
     var sentencePauseMs: Int
-        get() = prefs.getInt("sentencePauseMs", 150)
+        get() = prefs.getInt("sentencePauseMs", 350)
         set(value) = prefs.edit().putInt("sentencePauseMs", value).apply()
 
-    /** What the engine actually reads: user fixes first, then reading options and Korean normalization. */
     /** The language a sentence is read in: the book's, except an English-only sentence in a Korean (or unlabeled) book. */
     private fun spokenLanguage(text: String, language: Language?): Language? =
-        if ((language == null || language.code.startsWith("ko")) && isLatinOnly(text)) Language("en") else language
+        if ((language == null || language.code.startsWith("ko")) && VoiceReaderNative.isLatinOnly(text)) Language("en") else language
 
+    /** What the engine actually reads: user fixes first, then reading options and Korean normalization (in Rust). */
     private fun speakable(text: String, language: Language?): String {
-        val fixed = dictionary.apply(text)
         val korean = language == null || language.code.startsWith("ko")
-        return if (korean) KoreanNormalizer.normalize(fixed, readingOptions) else applyReadingOptions(fixed, readingOptions)
+        return if (korean) {
+            VoiceReaderNative.normalizeKorean(text, readingOptions, dictKeys, dictVals, dictionary)
+        } else {
+            VoiceReaderNative.applyReadingOptions(dictionary.apply(text), readingOptions)
+        }
     }
 
     // --- Voice packs (V-1, V-4): Supertonic files unzipped under voices/<name>; none = Android system TTS ---
@@ -619,7 +623,8 @@ class App : Application(), TtsNavigator.Listener {
     fun voicesOf(pack: String): List<String> {
         val count = try {
             DataInputStream(File(voicesDir, "$pack/voice.bin").inputStream()).use { input ->
-                ByteArray(48).also { input.readFully(it) }.let { readVoiceBinHeader(it).count }
+                val header = ByteArray(48).also { input.readFully(it) }
+                VoiceReaderNative.readVoiceBinCount(header) ?: readVoiceBinHeader(header).count
             }
         } catch (e: Exception) {
             1
@@ -703,14 +708,15 @@ class App : Application(), TtsNavigator.Listener {
                 val speakers = speakers
                 val ranges = when {
                     recorded != null -> recordedPieces(data, sentences)
-                    speakers == null -> return sentences.tokenize(data) // the device's TTS has no trouble with short sentences
-                    else -> {
-                        val split = if (speakers.mixed) splitDialogue(data, sentences::tokenize) else sentences.tokenize(data)
-                        joinShortSentences(split) { a, b ->
-                            val (x, y) = data.substring(a) to data.substring(b)
-                            speakers.of(x) != speakers.of(y) || isLatinOnly(x) != isLatinOnly(y) // one voice, one language per piece
-                        }
-                    }
+                    speakers == null -> return sentences.tokenize(data) // system TTS paces via TransformingEngine
+                    else -> VoiceReaderNative.chunkParagraph(
+                        text = data,
+                        sentenceRanges = sentences.tokenize(data),
+                        sentencesOf = sentences::tokenize,
+                        splitQuotes = speakers.mixed,
+                        minChars = 10,
+                        maxChars = 75,
+                    )
                 }
                 if (speakers != null) prefetch(speakers, data, ranges, language ?: publication?.metadata?.language)
                 return ranges
@@ -718,9 +724,16 @@ class App : Application(), TtsNavigator.Listener {
         }
     }
 
-    /** One voice reads a recording, so short sentences join unless the language changes. Shared by export and playback. */
+    /** One voice reads a recording, so only ultra-short fragments join unless the language changes. Shared by export and playback. */
     private fun recordedPieces(data: String, sentences: TextTokenizer): List<IntRange> =
-        joinShortSentences(sentences.tokenize(data)) { a, b -> isLatinOnly(data.substring(a)) != isLatinOnly(data.substring(b)) }
+        VoiceReaderNative.chunkParagraph(
+            text = data,
+            sentenceRanges = sentences.tokenize(data),
+            sentencesOf = sentences::tokenize,
+            splitQuotes = false,
+            minChars = 10,
+            maxChars = 75,
+        )
 
     private fun prefetch(speakers: Speakers, paragraph: String, ranges: List<IntRange>, language: Language?) {
         val texts = ranges.map { paragraph.substring(it) }.filter { text -> text.any { it.isLetterOrDigit() } } // as Readium
@@ -976,8 +989,17 @@ class App : Application(), TtsNavigator.Listener {
         val base = recorded?.let { RecordedEngineProvider(synthesized, it) { sentencePauseMs } } ?: synthesized
         this.speakers = speakers
         this.recorded = recorded
+        val systemTtsPause: ((String) -> Int)? =
+            if (speakers == null && recorded == null) {
+                { spoken -> (sentencePauseMs + VoiceReaderNative.punctuationPauseBonusMs(spoken)).coerceAtLeast(80) }
+            } else {
+                null
+            }
         val factory = TtsNavigatorFactory(
-            this, pub, TransformingEngineProvider(base, ::speakable, ::spokenLanguage), tokenizerFactory = ::sentenceTokenizer,
+            this,
+            pub,
+            TransformingEngineProvider(base, ::speakable, ::spokenLanguage, systemTtsPause),
+            tokenizerFactory = ::sentenceTokenizer,
         ) ?: return toast("이 책은 낭독할 수 없습니다")
         val nav = factory.createNavigator(this, start, AndroidTtsPreferences(speed = speed))
             .getOrElse { return toast("낭독 엔진을 시작할 수 없습니다: ${it.message}") }

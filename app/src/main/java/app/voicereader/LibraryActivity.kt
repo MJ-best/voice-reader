@@ -214,9 +214,45 @@ class LibraryActivity : AppCompatActivity() {
     /** Long-press on a book. */
     private fun showBookActions(book: Book) {
         val onShelves = app.shelves.filter { book.id in it.bookIds }.joinToString { it.name }
+        val ww = app.wordWiseLabel(app.wordWiseLevel(book))
         Sheet(this, book.title, book.author.ifBlank { null }).apply {
             row("책장 정하기", onShelves.ifEmpty { "아직 어느 책장에도 없어요" }, icon = R.drawable.ic_shelf, more = true) { pickShelves(book) }
+            row("영어 단어 힌트 (Word Wise)", "현재: $ww · 어려운 영어 단어 아래 쉬운 힌트", icon = R.drawable.ic_book, more = true) {
+                pickWordWise(book)
+            }
             row(if (book.path != null) "서재에서 빼기" else "서재에서 삭제", icon = R.drawable.ic_delete) { confirmDelete(book) }
+        }.show()
+    }
+
+    private fun pickWordWise(book: Book) {
+        val current = app.wordWiseLevel(book)
+        val options = listOf(
+            Triple(0, "끔 (원본)", "변환하지 않은 원본 책을 보여줘요"),
+            Triple(1, "적게 (어려운 단어만)", "고급·학술 어휘 아래에만 쉬운 영어 힌트를 달아요"),
+            Triple(2, "보통 (권장)", "중·고급 영어 어휘 아래에 쉬운 영어 힌트를 달아요"),
+            Triple(3, "많이 (자세히)", "기초 이후의 다양한 단어에 쉬운 영어 힌트를 달아요"),
+        )
+        Sheet(this, "영어 단어 힌트 (Word Wise)", "영어 원서의 어려운 단어 아래에 쉬운 영어 동의어를 달아요.").apply {
+            options.forEach { (level, label, desc) ->
+                row(label, desc, checked = (level == current)) {
+                    if (level == current) return@row
+                    lifecycleScope.launch {
+                        if (level > 0) toast("영어 단어 힌트를 변환하는 중…")
+                        app.setWordWiseLevel(book, level).fold(
+                            onSuccess = { count ->
+                                val msg = when {
+                                    level == 0 -> "원본 책으로 되돌렸어요"
+                                    count > 0 -> "어려운 단어 ${count}곳에 영어 힌트를 달았어요"
+                                    else -> "영어 단어 힌트를 켰어요 (${app.wordWiseLabel(level)})"
+                                }
+                                toast(msg)
+                                refresh()
+                            },
+                            onFailure = { toast("변환하지 못했어요: ${it.message}") },
+                        )
+                    }
+                }
+            }
         }.show()
     }
 

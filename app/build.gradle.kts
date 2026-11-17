@@ -24,6 +24,53 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
         isCoreLibraryDesugaringEnabled = true // required by Readium
     }
+
+    sourceSets {
+        getByName("main").jniLibs.srcDir("src/main/jniLibs")
+    }
+}
+
+val buildRustCore = tasks.register("buildRustCore") {
+    val rustDir = rootProject.file("rust")
+    val jniOutDir = project.file("src/main/jniLibs")
+    val prebuilt = project.file("src/main/jniLibs/arm64-v8a/libvoicereader_core.so")
+    inputs.dir(rustDir.resolve("voicereader-core/src"))
+    inputs.file(rustDir.resolve("Cargo.toml"))
+    outputs.file(prebuilt)
+    doLast {
+        val hasNdk = !System.getenv("ANDROID_NDK_HOME").isNullOrBlank() ||
+            !System.getenv("ANDROID_HOME").isNullOrBlank()
+        val cargoNdkOk = try {
+            ProcessBuilder("cargo", "ndk", "--version")
+                .redirectErrorStream(true)
+                .start()
+                .waitFor() == 0
+        } catch (_: Exception) {
+            false
+        }
+        if (hasNdk && cargoNdkOk) {
+            project.exec {
+                workingDir = rustDir
+                commandLine(
+                    "cargo", "ndk", "-t", "arm64-v8a",
+                    "-o", jniOutDir.absolutePath,
+                    "build", "--release", "-p", "voicereader-core",
+                )
+            }
+        } else if (!prebuilt.exists()) {
+            logger.warn(
+                "Skipping buildRustCore (install cargo-ndk and Android NDK, or run: " +
+                    "cd rust && cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release -p voicereader-core). " +
+                    "Kotlin fallbacks will be used unless libvoicereader_core.so is packaged.",
+            )
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name.startsWith("merge") && name.endsWith("JniLibFolders")) {
+        dependsOn(buildRustCore)
+    }
 }
 
 kotlin {

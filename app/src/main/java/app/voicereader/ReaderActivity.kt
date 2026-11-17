@@ -53,7 +53,7 @@ import org.readium.r2.shared.publication.services.positions
 import org.readium.r2.shared.util.Url
 
 private val SPEEDS = listOf(0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
-private val PAUSES = listOf(60, 150, 320) // ms of silence between sentences: short, normal, long
+private val PAUSES = listOf(180, 350, 600) // ms of silence between sentences: short, normal, long
 private val THEMES = listOf(Theme.LIGHT, Theme.SEPIA, Theme.DARK)
 /** Page keys, and scroll wheels that send arrow keys: true turns forward. */
 private val PAGE_KEYS = mapOf(
@@ -473,11 +473,59 @@ class ReaderActivity : AppCompatActivity() {
                 icon = R.drawable.ic_toc,
                 more = true,
             ) { showReadingOptions() }
+            app.book?.let { book ->
+                val ww = app.wordWiseLabel(app.wordWiseLevel(book))
+                row(
+                    "영어 단어 힌트 (Word Wise)",
+                    "현재: $ww · 어려운 영어 단어 아래에 쉬운 영어 힌트 표시",
+                    icon = R.drawable.ic_book,
+                    more = true,
+                ) { showWordWise(book) }
+            }
             row("발음 사전", "${app.bookWords.size + app.globalWords.size}개 · 단어를 길게 눌러 바로 고칠 수 있어요", icon = R.drawable.ic_mic, more = true) {
                 showPronunciations()
             }
             row("줄 그은 곳", "${app.underlines.value.size}개 · 본문을 길게 눌러 줄을 그어요", icon = R.drawable.ic_underline, more = true) {
                 showUnderlines()
+            }
+        }.show()
+    }
+
+    private fun showWordWise(book: Book) {
+        val current = app.wordWiseLevel(book)
+        val options = listOf(
+            Triple(0, "끔 (원본)", "변환하지 않은 원본 책을 보여줘요"),
+            Triple(1, "적게 (어려운 단어만)", "고급·학술 어휘 아래에만 쉬운 영어 힌트를 달아요"),
+            Triple(2, "보통 (권장)", "중·고급 영어 어휘 아래에 쉬운 영어 힌트를 달아요"),
+            Triple(3, "많이 (자세히)", "기초 이후의 다양한 단어에 쉬운 영어 힌트를 달아요"),
+        )
+        Sheet(
+            this,
+            "영어 단어 힌트 (Word Wise)",
+            "어려운 영어 단어 아래에 쉬운 영영 동의어 힌트를 달아요. 낭독할 때는 힌트를 읽지 않아요.",
+        ).apply {
+            options.forEach { (level, label, desc) ->
+                row(label, desc, checked = (level == current)) {
+                    if (level == current) return@row
+                    if (::navigator.isInitialized) app.saveLocator(navigator.currentLocator.value)
+                    lifecycleScope.launch {
+                        if (level > 0) toast("영어 단어 힌트를 준비하는 중…")
+                        app.setWordWiseLevel(book, level).fold(
+                            onSuccess = { count ->
+                                val msg = when {
+                                    level == 0 -> "원본 책으로 돌아가요"
+                                    count > 0 -> "어려운 단어 ${count}곳에 영어 힌트를 달았어요"
+                                    else -> "영어 단어 힌트를 켰어요 (${app.wordWiseLabel(level)})"
+                                }
+                                toast(msg)
+                                recreate()
+                            },
+                            onFailure = { err ->
+                                toast("변환하지 못했어요: ${err.message}")
+                            },
+                        )
+                    }
+                }
             }
         }.show()
     }
@@ -521,7 +569,7 @@ class ReaderActivity : AppCompatActivity() {
             }
             choice(
                 "문장 사이 쉼",
-                if (app.activeVoice == null) "음성 팩으로 읽을 때 적용돼요" else null,
+                "문장과 문장 사이의 호흡 길이를 정해요 (모든 음성에 적용)",
                 listOf("짧게", "보통", "길게"),
                 PAUSES.indexOf(app.sentencePauseMs).takeIf { it >= 0 } ?: 1,
             ) { app.sentencePauseMs = PAUSES[it] }

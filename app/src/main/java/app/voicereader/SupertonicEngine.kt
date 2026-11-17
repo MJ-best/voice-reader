@@ -8,7 +8,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import app.voicereader.korean.isDialogue
 import com.k2fsa.sherpa.onnx.GeneratedAudio
 import com.k2fsa.sherpa.onnx.GenerationConfig
 import com.k2fsa.sherpa.onnx.OfflineTts
@@ -24,8 +23,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread
-import kotlin.math.abs
 import kotlin.concurrent.withLock
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,8 +42,6 @@ import org.readium.r2.shared.util.Try
 
 private const val STEPS = 8 // what the listening test used; drop to 4–5 if a phone can't keep up.
 private val LANGUAGES = setOf("ko", "en", "es", "pt", "fr") // Supertonic 2
-private const val SILENCE = 0.01f // ≈ -40 dBFS
-private const val MARGIN_MS = 50 // kept around speech so soft onsets aren't clipped
 
 private val ONNX_PARTS = listOf("duration_predictor", "text_encoder", "vector_estimator", "vocoder")
 private val OTHER_FILES = listOf("tts.json", "unicode_indexer.bin", "voice.bin")
@@ -155,27 +152,21 @@ class Synthesizer(private val dir: File) {
 
     private fun generate(key: Key): GeneratedAudio {
         val started = SystemClock.elapsedRealtime()
+        val pacedSpeed = VoiceReaderNative.recommendedSpeed(key.speed, key.text)
         val audio = tts.generateWithConfig(
             key.text,
-            GenerationConfig(sid = key.sid, speed = key.speed, numSteps = STEPS, extra = mapOf("lang" to key.language)),
+            GenerationConfig(sid = key.sid, speed = pacedSpeed, numSteps = STEPS, extra = mapOf("lang" to key.language)),
         )
         val seconds = audio.samples.size.toDouble() / audio.sampleRate
-        Log.i("Supertonic", "${dir.name} sid=${key.sid} ${key.language} rtf=%.3f (%.1fs audio)".format((SystemClock.elapsedRealtime() - started) / 1000.0 / seconds, seconds))
-        return trimmed(audio)
-    }
-
-    /**
-     * Supertonic pads every sentence with ~250ms of silence on both ends, which added up to a half-second gap between
-     * sentences. Keep a small margin around the speech; the player adds the listener's chosen pause.
-     */
-    private fun trimmed(audio: GeneratedAudio): GeneratedAudio {
-        val samples = audio.samples
-        val first = samples.indexOfFirst { abs(it) > SILENCE }
-        if (first < 0) return audio
-        val last = samples.indexOfLast { abs(it) > SILENCE }
-        val margin = audio.sampleRate * MARGIN_MS / 1000
-        val speech = samples.copyOfRange((first - margin).coerceAtLeast(0), (last + margin + 1).coerceAtMost(samples.size))
-        return GeneratedAudio(speech, audio.sampleRate)
+        Log.i(
+            "Supertonic",
+            "${dir.name} sid=${key.sid} ${key.language} speed=$pacedSpeed rtf=%.3f (%.1fs audio)".format(
+                (SystemClock.elapsedRealtime() - started) / 1000.0 / seconds,
+                seconds,
+            ),
+        )
+        val normalized = VoiceReaderNative.trimAndNormalizeSpeech(audio.samples, audio.sampleRate, key.text)
+        return GeneratedAudio(normalized, audio.sampleRate)
     }
 
     /** Blocks until the sentence being synthesized (if any) is done, then frees the model. Call off the main thread. */
@@ -203,56 +194,128 @@ data class Voice(val synthesizer: Synthesizer, val sid: Int)
 class Speakers(val narration: Voice, val dialogue: Voice) {
     val mixed: Boolean get() = narration != dialogue
 
-    fun of(text: String): Voice = if (mixed && isDialogue(text)) dialogue else narration
+    fun of(text: String): Voice = if (mixed && VoiceReaderNative.isDialogue(text)) dialogue else narration
 }
 
 /**
- * Plays [audio] to the end on the calling thread, unless [keepGoing] turns false. Returns whether it finished.
- * [speed] other than 1 time-stretches (pitch kept): for recordings, which can't be re-synthesized at another speed.
+ * Persistent `AudioTrack.MODE_STREAM` player that appends sample-accurate trailing silence in Rust (`appendPauseSilence`)
+ * instead of releasing a `MODE_STATIC` track on every sentence. Eliminates end-of-sentence syllable clipping and
+ * maintains exact inter-sentence pacing across all synthesized and recorded voices.
  */
-fun playBlocking(audio: GeneratedAudio, speed: Float = 1f, keepGoing: () -> Boolean): Boolean {
-    val samples = audio.samples
-    if (samples.isEmpty()) return true
-    val track = AudioTrack.Builder()
-        .setAudioAttributes(
-            AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                .build(),
-        )
-        .setAudioFormat(
-            AudioFormat.Builder()
-                .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                .setSampleRate(audio.sampleRate)
-                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                .build(),
-        )
-        .setTransferMode(AudioTrack.MODE_STATIC)
-        .setBufferSizeInBytes(samples.size * 4)
-        .build()
-    try {
-        track.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
-        if (speed != 1f) track.playbackParams = PlaybackParams().setSpeed(speed)
-        track.play()
-        while (track.playbackHeadPosition < samples.size) {
-            if (!keepGoing()) return false
-            Thread.sleep(20)
+class StreamAudioPlayer {
+    @Volatile private var track: AudioTrack? = null
+    private var trackRate: Int = 0
+    private var trackSpeed: Float = 1f
+
+    private fun ensureTrack(sampleRate: Int, speed: Float): AudioTrack {
+        val current = track
+        if (current != null && trackRate == sampleRate) {
+            if (trackSpeed != speed) {
+                current.playbackParams = PlaybackParams().setSpeed(speed)
+                trackSpeed = speed
+            }
+            return current
+        }
+        release()
+        val minBytes = AudioTrack.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_FLOAT,
+        ).coerceAtLeast(sampleRate)
+        val bufferBytes = minBytes.coerceAtLeast(sampleRate * 4 / 5) // >= 200ms float mono buffer
+        return AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build(),
+            )
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .setBufferSizeInBytes(bufferBytes)
+            .build()
+            .also { created ->
+                if (speed != 1f) created.playbackParams = PlaybackParams().setSpeed(speed)
+                track = created
+                trackRate = sampleRate
+                trackSpeed = speed
+            }
+    }
+
+    fun playSentence(
+        audio: GeneratedAudio,
+        speed: Float,
+        pauseMs: Int,
+        text: String,
+        keepGoing: () -> Boolean,
+    ): Boolean {
+        val sampleRate = audio.sampleRate
+        if (sampleRate <= 0) return true
+        val scaledPause = if (speed != 1f) (pauseMs * speed).roundToInt() else pauseMs
+        val samples = VoiceReaderNative.appendPauseSilence(audio.samples, sampleRate, scaledPause, text)
+        if (samples.isEmpty()) return true
+        val t = ensureTrack(sampleRate, speed)
+        if (t.playState != AudioTrack.PLAYSTATE_PLAYING) t.play()
+        val chunkSize = (sampleRate / 50).coerceAtLeast(256) // ~20ms chunks for fast stop/skip response
+        var offset = 0
+        while (offset < samples.size) {
+            if (!keepGoing()) {
+                stopPlayback()
+                return false
+            }
+            val n = minOf(chunkSize, samples.size - offset)
+            val written = t.write(samples, offset, n, AudioTrack.WRITE_BLOCKING)
+            if (written < 0) return false
+            offset += written
         }
         return true
-    } finally {
-        track.release()
+    }
+
+    fun stopPlayback() {
+        val t = track ?: return
+        runCatching {
+            if (t.playState == AudioTrack.PLAYSTATE_PLAYING) t.pause()
+            t.flush()
+        }
+    }
+
+    fun release() {
+        val t = track
+        track = null
+        trackRate = 0
+        trackSpeed = 1f
+        if (t != null) {
+            runCatching {
+                t.pause()
+                t.flush()
+                t.release()
+            }
+        }
     }
 }
 
-/** Plays a sentence, then the pause after it: waited here rather than baked into the audio, so changing it needs no resynthesis. */
-fun playSentence(audio: GeneratedAudio, speed: Float, pauseMs: Int, keepGoing: () -> Boolean): Boolean {
-    if (!playBlocking(audio, speed, keepGoing)) return false
-    val pauseEnds = SystemClock.elapsedRealtime() + pauseMs
-    while (SystemClock.elapsedRealtime() < pauseEnds) {
-        if (!keepGoing()) return false
-        Thread.sleep(10)
+/** Plays a single standalone sample (used for voice preview) completely without clipping the tail. */
+fun playBlocking(audio: GeneratedAudio, speed: Float = 1f, keepGoing: () -> Boolean): Boolean {
+    if (audio.samples.isEmpty() || audio.sampleRate <= 0) return true
+    val player = StreamAudioPlayer()
+    return try {
+        if (!player.playSentence(audio, speed, 220, "", keepGoing)) return false
+        // Wait briefly so the 200ms ring buffer finishes draining the preview sentence cleanly.
+        val waitUntil = SystemClock.elapsedRealtime() + 220
+        while (SystemClock.elapsedRealtime() < waitUntil) {
+            if (!keepGoing()) return false
+            Thread.sleep(15)
+        }
+        true
+    } finally {
+        player.release()
     }
-    return true
 }
 
 /**
@@ -285,6 +348,7 @@ private class SupertonicEngine(
     override val voices: Set<AndroidTtsEngine.Voice> = emptySet()
 
     private val player = Executors.newSingleThreadExecutor()
+    private val streamPlayer = StreamAudioPlayer()
     private val main = Handler(Looper.getMainLooper())
     private var listener: TtsEngine.Listener<AndroidTtsEngine.Error>? = null
 
@@ -317,7 +381,7 @@ private class SupertonicEngine(
             voice.sid,
         )
         player.execute {
-            val finished = runCatching { play(requestId, audio) }
+            val finished = runCatching { play(requestId, text, audio) }
                 .onFailure { Log.e("Supertonic", "synthesis failed", it) }
             main.post {
                 when {
@@ -332,8 +396,8 @@ private class SupertonicEngine(
         }
     }
 
-    /** Waits for the (usually prefetched) audio, then plays it. Returns false if stopped or replaced midway. */
-    private fun play(id: TtsEngine.RequestId, pending: Future<GeneratedAudio>): Boolean {
+    /** Waits for the (usually prefetched) audio, then streams it with sample-accurate trailing silence. */
+    private fun play(id: TtsEngine.RequestId, text: String, pending: Future<GeneratedAudio>): Boolean {
         var audio: GeneratedAudio? = null
         while (audio == null) {
             if (current != id) return false
@@ -343,15 +407,18 @@ private class SupertonicEngine(
                 // still synthesizing
             }
         }
-        return playSentence(audio, 1f, pauseMs()) { current == id }
+        return streamPlayer.playSentence(audio, 1f, pauseMs(), text) { current == id }
     }
 
     override fun stop() {
         current = null
+        streamPlayer.stopPlayback()
     }
 
     override fun close() {
         current = null
-        player.shutdown() // the running request notices within ~20ms; the Synthesizer (model + cache) lives in App
+        streamPlayer.stopPlayback()
+        player.execute { streamPlayer.release() }
+        player.shutdown() // Synthesizer (model + cache) lives in App
     }
 }

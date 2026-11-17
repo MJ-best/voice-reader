@@ -138,17 +138,20 @@ Supertonic Voice Builder 등에서 만든 목소리 파일(`style_ttl`·`style_d
 ## 빌드
 
 - JDK 17 이상, Android SDK 36(build-tools 35 이상)
+- Rust (`rustc`/`cargo`) + `cargo-ndk` + Android NDK (`aarch64-linux-android` 타깃: `rustup target add aarch64-linux-android && cargo install cargo-ndk`)
 - 기기: Android 8.0(API 26) 이상, arm64
 
 ```bash
-./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
-./gradlew test                 # 단위 테스트(정규화, 대사 분리, DRM 감지, 기기 검색)
+cd rust && cargo test          # Rust 코어 엔진 단위 테스트 (한국어 정규화, 오디오 페이싱, 영영 힌트, ZIP/EPUB)
+cd .. && ./gradlew assembleDebug  # cargo-ndk로 libvoicereader_core.so 빌드 후 APK 생성
+./gradlew test                 # Kotlin 단위 테스트(정규화, 대사 분리, DRM 감지, 기기 검색)
 ```
 
 | 폴더 | 내용 |
 |---|---|
+| `rust/` | 순수 Rust 코어 엔진(`voicereader-core` · JNI): 한국어 정규화, 오디오 트리밍·페이싱, 문장·대사 분할, `voice.bin` 처리, 오프라인 영영 단어 힌트(Word Wise) EPUB 변환기 |
 | `app/` | 안드로이드 앱(서재, 리더, 낭독 엔진, 음성 팩) |
-| `korean/` | 순수 Kotlin 텍스트 처리: 한국어 정규화, 발음 사전, 대사 분리, 읽기 옵션. 안드로이드 의존성이 없어 iPad·Mac용 Kotlin Multiplatform으로 옮길 수 있습니다 |
+| `korean/` | 순수 Kotlin 텍스트 처리 및 JVM fallback(한국어 정규화, 발음 사전, 대사 분리, 읽기 옵션) |
 | `spike/` | 온디바이스 한국어 TTS 모델 비교 스크립트와 결과 |
 
 ## 권한

@@ -1,10 +1,18 @@
-<!-- Themed-icon (Android 13+) silhouette: head with eye cut-outs, open book, hands. -->
+<!-- Themed-icon (Android 13+) silhouette: quote marks, dome head with oval eyes, open book, spherical hands. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
-        android:pathData="M54,47m-21,0a21,21 0,1 1,42 0a21,21 0,1 1,-42 0ZM47.5,49.5m-4,0a4,5.2 0,1 0,8 0a4,5.2 0,1 0,-8 0ZM60.5,47.5m-4,0a4,5.2 0,1 0,8 0a4,5.2 0,1 0,-8 0Z" />
+    <!-- Upper-left speech / quote strokes -->
     <path android:fillColor="#FFFFFFFF"
-        android:pathData="M33,55.5Q44,55 54,61.5Q64,55 75,55.5L73,77Q64,77.5 54,81Q44,77.5 35,77Z" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M36.5,72.5m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M71.5,72.5m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+        android:pathData="M36.3,36.2 L39.8,39.7 A1.6,1.6 0 0 1 37.5,41.9 L34.0,38.4 A1.6,1.6 0 0 1 36.3,36.2 Z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M42.2,32.7 L44.3,37.8 A1.6,1.6 0 0 1 41.3,39.0 L39.2,33.9 A1.6,1.6 0 0 1 42.2,32.7 Z" />
+    <!-- Dome head with oval eye cutouts (evenOdd) -->
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M54.8,41.8 A23.5,20.5 0 0 1 77.6,60.0 Q66.5,58.6 54.5,65.2 Q42.5,58.6 31.8,60.0 A23.5,20.5 0 0 1 54.8,41.8 Z M48.3,52.1 a2.7,3.3 0 1,0 0.1,0 Z M61.7,51.4 a2.7,3.5 0 1,0 0.1,0 Z" />
+    <!-- Open book covers and spine -->
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M29.5,61.6 Q42.0,61.2 54.0,67.5 Q66.0,61.2 78.5,61.6 L76.6,90.0 L31.4,90.0 Z" />
+    <!-- Left and right spherical hands -->
+    <path android:fillColor="#FFFFFFFF" android:pathData="M28.0,70.8 m-5.0,0 a5.0,5.0 0 1,1 10.0,0 a5.0,5.0 0 1,1 -10.0,0" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M80.0,70.8 m-5.0,0 a5.0,5.0 0 1,1 10.0,0 a5.0,5.0 0 1,1 -10.0,0" />
 </vector>

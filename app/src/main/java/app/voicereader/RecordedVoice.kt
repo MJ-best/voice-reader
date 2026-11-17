@@ -110,6 +110,7 @@ private class RecordedEngine(
 ) : AndroidTts by engine {
 
     private val player = Executors.newSingleThreadExecutor()
+    private val streamPlayer = StreamAudioPlayer()
     private val main = Handler(Looper.getMainLooper())
     private var listener: TtsEngine.Listener<AndroidTtsEngine.Error>? = null
 
@@ -125,6 +126,7 @@ private class RecordedEngine(
         val file = File(dir, "${recordingKey(text)}.m4a")
         if (!file.exists()) {
             current = null
+            streamPlayer.stopPlayback()
             return engine.speak(requestId, text, language)
         }
         engine.stop()
@@ -132,9 +134,11 @@ private class RecordedEngine(
         val speed = settings.value.speed.toFloat()
         player.execute {
             val finished = runCatching {
-                val audio = decodeAudio(file)
+                val decoded = decodeAudio(file)
+                val normalized = VoiceReaderNative.trimAndNormalizeSpeech(decoded.samples, decoded.sampleRate, text)
+                val audio = GeneratedAudio(normalized, decoded.sampleRate)
                 val started = SystemClock.elapsedRealtime()
-                playSentence(audio, speed, pauseMs()) { current == requestId }.also {
+                streamPlayer.playSentence(audio, speed, pauseMs(), text) { current == requestId }.also {
                     Log.i("Recorded", "%.1fs audio ×%.2f played in %.1fs".format(audio.samples.size.toFloat() / audio.sampleRate, speed, (SystemClock.elapsedRealtime() - started) / 1000f))
                 }
             }
@@ -159,11 +163,14 @@ private class RecordedEngine(
 
     override fun stop() {
         current = null
+        streamPlayer.stopPlayback()
         engine.stop()
     }
 
     override fun close() {
         current = null
+        streamPlayer.stopPlayback()
+        player.execute { streamPlayer.release() }
         player.shutdown()
         engine.close()
     }

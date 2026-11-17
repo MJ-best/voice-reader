@@ -24,6 +24,7 @@ fun readVoiceBinHeader(bytes: ByteArray): VoiceBinHeader {
 
 /** [bin] with one more voice at the end (sid = the old count). The style sizes must match the existing voices. */
 fun appendVoice(bin: ByteArray, ttl: FloatArray, dp: FloatArray): ByteArray {
+    VoiceReaderNative.appendVoiceBin(bin, ttl, dp)?.let { return it }
     val h = readVoiceBinHeader(bin)
     require(ttl.size == h.ttl && dp.size == h.dp) {
         "style sizes ${ttl.size}/${dp.size} don't match this pack's ${h.ttl}/${h.dp}"

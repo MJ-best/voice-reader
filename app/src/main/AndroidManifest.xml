@@ -28,6 +28,7 @@
         android:name=".App"
         android:label="보이스 리더"
         android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:requestLegacyExternalStorage="true"
         android:theme="@style/Theme.VoiceReader">
 
