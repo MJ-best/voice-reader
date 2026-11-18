@@ -1,3 +1,4 @@
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -17,6 +18,45 @@ android {
         versionName = "0.1.6"
         // sherpa-onnx ships ~30MB of native code per ABI; phones and the Apple-silicon emulator are arm64.
         ndk { abiFilters += "arm64-v8a" }
+    }
+
+    buildFeatures { buildConfig = true }
+
+    // JVM tests have no libvoicereader_core.so: VoiceReaderNative logs and falls back to Kotlin, so Log must not throw.
+    testOptions { unitTests.isReturnDefaultValues = true }
+
+    // github: the sideloaded APK (GitHub Releases), may ask for "all files access" to find every EPUB on the device.
+    // play: the Google Play build. Play only allows MANAGE_EXTERNAL_STORAGE for file managers and the like,
+    // so this build drops it and adds books through the system file picker instead.
+    flavorDimensions += "store"
+    productFlavors {
+        create("github") {
+            dimension = "store"
+            buildConfigField("boolean", "ALL_FILES_ACCESS", "true")
+        }
+        create("play") {
+            dimension = "store"
+            buildConfigField("boolean", "ALL_FILES_ACCESS", "false")
+        }
+    }
+
+    // Upload key for Google Play, read from keystore.properties (git-ignored). Without it, release builds stay unsigned.
+    val keystoreProps = rootProject.file("keystore.properties")
+    signingConfigs {
+        if (keystoreProps.exists()) {
+            val props = Properties().apply { keystoreProps.inputStream().use { load(it) } }
+            create("upload") {
+                storeFile = rootProject.file(props.getProperty("storeFile"))
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            if (keystoreProps.exists()) signingConfig = signingConfigs.getByName("upload")
+        }
     }
 
     compileOptions {

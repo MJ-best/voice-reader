@@ -94,7 +94,10 @@ class LibraryActivity : AppCompatActivity() {
         grid.layoutManager = StaggeredGridLayoutManager(2, StaggeredGridLayoutManager.VERTICAL)
         grid.adapter = adapter
         grid.itemAnimator = null // no cross-fades: every animation frame is a refresh on e-ink
-        findViewById<View>(R.id.emptyFind).setOnClickListener { findOnDevice() }
+        findViewById<View>(R.id.emptyFind).apply {
+            isVisible = app.canScanDevice
+            setOnClickListener { findOnDevice() }
+        }
         findViewById<View>(R.id.emptyPick).setOnClickListener { importBook() }
 
         // New EPUBs on the device show up by themselves (quietly, only if file access was granted).
@@ -159,6 +162,7 @@ class LibraryActivity : AppCompatActivity() {
     private fun importBook() = pickBook.launch(arrayOf("application/epub+zip", "application/octet-stream"))
 
     private fun showAddSheet() {
+        if (!app.canScanDevice) return importBook()
         Sheet(this, "책 추가").apply {
             row(
                 "기기에서 모두 찾기",

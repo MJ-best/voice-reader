@@ -151,7 +151,8 @@ Supertonic Voice Builder 등에서 만든 목소리 파일(`style_ttl`·`style_d
 
 ```bash
 cd rust && cargo test          # Rust 코어 엔진 단위 테스트 (한국어 정규화, 오디오 페이싱, 영영 힌트, ZIP/EPUB)
-cd .. && ./gradlew assembleDebug  # cargo-ndk로 libvoicereader_core.so 빌드 후 APK 생성
+cd .. && ./gradlew assembleGithubDebug  # cargo-ndk로 libvoicereader_core.so 빌드 후 APK 생성
+./gradlew bundlePlayRelease    # Google Play용 AAB(모든 파일 접근 권한 없음, keystore.properties로 서명)
 ./gradlew test                 # Kotlin 단위 테스트(정규화, 대사 분리, DRM 감지, 기기 검색)
 ```
 

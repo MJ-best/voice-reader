@@ -392,9 +392,12 @@ class App : Application(), TtsNavigator.Listener {
         get() = prefs.getStringSet("skippedPaths", emptySet())!!
         set(value) = prefs.edit().putStringSet("skippedPaths", value).apply()
 
+    /** Whether this build can look through the whole device. The Play build can't ask for "all files access". */
+    val canScanDevice: Boolean get() = BuildConfig.ALL_FILES_ACCESS || Build.VERSION.SDK_INT < 30
+
     /** Android 11+ needs "all files access" to see other apps' documents; older versions the storage permission. */
     fun canReadAllFiles(): Boolean =
-        if (Build.VERSION.SDK_INT >= 30) Environment.isExternalStorageManager()
+        if (Build.VERSION.SDK_INT >= 30) BuildConfig.ALL_FILES_ACCESS && Environment.isExternalStorageManager()
         else checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
 
     private fun storageRoots(): List<File> =

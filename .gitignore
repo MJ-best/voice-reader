@@ -16,3 +16,7 @@ my-voice/
 rust/target/
 app/src/main/jniLibs/
 
+
+# Play upload key (never commit)
+keystore.properties
+*.jks
