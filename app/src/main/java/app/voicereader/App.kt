@@ -229,6 +229,66 @@ class App : Application(), TtsNavigator.Listener {
 
     fun epub(book: Book) = book.path?.let(::File) ?: File(dir, "${book.id}.epub")
     fun cover(book: Book) = File(dir, "${book.id}.jpg")
+    fun wordWiseEpub(book: Book, level: Int) = File(dir, "${book.id}.wordwise.$level.epub")
+
+    fun wordWiseLevel(book: Book): Int = prefs.getInt("wordWise:${book.id}", 0).coerceIn(0, 3)
+
+    fun wordWiseLabel(level: Int): String = when (level) {
+        1 -> "적게"
+        2 -> "보통"
+        3 -> "많이"
+        else -> "끔"
+    }
+
+    fun effectiveEpub(book: Book): File {
+        val level = wordWiseLevel(book)
+        if (level in 1..3) {
+            val converted = wordWiseEpub(book, level)
+            if (converted.exists() && converted.length() > 0L) return converted
+        }
+        return epub(book)
+    }
+
+    /**
+     * Converts [book] with Kindle-style English Word Wise `<ruby>` hints at [level] (1..3), or restores the original
+     * EPUB when [level] == 0. Never modifies the user's original EPUB file. Returns the number of annotated words.
+     */
+    suspend fun setWordWiseLevel(book: Book, level: Int): Result<Int> {
+        val clamped = level.coerceIn(0, 3)
+        val result = withContext(Dispatchers.IO) {
+            runCatching {
+                if (clamped == 0) {
+                    0
+                } else {
+                    val src = epub(book)
+                    if (!src.exists()) error("원본 EPUB 파일을 찾을 수 없어요")
+                    val out = wordWiseEpub(book, clamped)
+                    if (out.exists() && out.length() > 0L && out.lastModified() >= src.lastModified()) {
+                        0
+                    } else {
+                        val tmp = File(out.path + ".part")
+                        tmp.delete()
+                        val count = VoiceReaderNative.convertEpubWordWise(src.absolutePath, tmp.absolutePath, clamped)
+                        if (!tmp.renameTo(out)) {
+                            tmp.delete()
+                            error("변환된 EPUB 파일을 저장할 수 없어요")
+                        }
+                        count
+                    }
+                }
+            }
+        }
+        if (result.isSuccess) {
+            prefs.edit().putInt("wordWise:${book.id}", clamped).apply()
+            if (this.book?.id == book.id) {
+                stopTts()
+                publication?.close()
+                publication = null
+                openBook(book)
+            }
+        }
+        return result
+    }
 
     // --- Library ---
 
